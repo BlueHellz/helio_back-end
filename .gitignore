@@ -1,3 +1,36 @@
-venv/
+# Python
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtualenvs
+venv/
+.venv/
+env/
+
+# Secrets — NEVER commit
 .env
+.env.*
+!.env.example
+!helios_api/.env.example
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Local data
+helios_api/data/*
+!helios_api/data/.gitkeep
+
+# Build
+build/
+dist/
