@@ -141,7 +141,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return {"status": "ok"}
 
     api = "/api/v1"
-    app.include_router(auth.router, prefix=api)
+    app.include_router(auth.public_router, prefix=api)
+    app.include_router(auth.secured_router, prefix=api)
     app.include_router(org_settings.router, prefix=api)
     app.include_router(projects.router, prefix=api)
     app.include_router(chat.router, prefix=api)

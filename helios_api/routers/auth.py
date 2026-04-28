@@ -1,8 +1,12 @@
-"""Authentication routes (Supabase Auth + ``profiles`` upsert)."""
+"""Authentication routes (Supabase Auth + ``profiles`` upsert).
+
+Signup, login, and refresh live on ``public_router`` (no Bearer required).
+Protected routes live on ``secured_router``.
+"""
 
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
@@ -12,7 +16,10 @@ from supabase_auth.errors import AuthApiError
 from helios_api.db.supabase import get_supabase
 from helios_api.middleware.auth import get_current_user
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+# Public endpoints — intentionally no Bearer / ``get_current_user`` dependency.
+public_router = APIRouter(prefix="/auth", tags=["auth"])
+# Bearer-protected auth routes (profile for current JWT).
+secured_router = APIRouter(prefix="/auth", tags=["auth"])
 
 Role = Literal["homeowner", "installer", "drone_op", "investor", "admin"]
 
@@ -48,7 +55,7 @@ def _session_blob(session: Any, user: Any) -> dict[str, Any]:
     }
 
 
-@router.post("/signup", status_code=status.HTTP_201_CREATED)
+@public_router.post("/signup", status_code=status.HTTP_201_CREATED)
 def signup(body: SignupBody, supabase: Client = Depends(get_supabase)) -> dict[str, Any]:
     """Create auth user + profile row, then return a fresh session (JWT pair)."""
     try:
@@ -102,7 +109,7 @@ def signup(body: SignupBody, supabase: Client = Depends(get_supabase)) -> dict[s
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
 
-@router.post("/login")
+@public_router.post("/login")
 def login(body: LoginBody, supabase: Client = Depends(get_supabase)) -> dict[str, Any]:
     """Password grant — returns Supabase session tokens."""
     try:
@@ -118,8 +125,11 @@ def login(body: LoginBody, supabase: Client = Depends(get_supabase)) -> dict[str
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
 
-@router.post("/refresh")
-def refresh_token(body: RefreshBody, supabase: Client = Depends(get_supabase)) -> dict[str, Any]:
+@public_router.post("/refresh")
+def refresh_token_route(
+    body: RefreshBody,
+    supabase: Client = Depends(get_supabase),
+) -> dict[str, Any]:
     """Exchange refresh token for a new session."""
     try:
         si = supabase.auth.refresh_session(body.refresh_token)
@@ -130,7 +140,7 @@ def refresh_token(body: RefreshBody, supabase: Client = Depends(get_supabase)) -
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
 
 
-@router.get("/me")
+@secured_router.get("/me")
 def auth_me(user: dict = Depends(get_current_user)) -> dict[str, Any]:
     """Return JWT-authenticated profile."""
     return {"profile": user}
