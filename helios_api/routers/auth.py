@@ -13,7 +13,7 @@ from pydantic import BaseModel, EmailStr, Field
 from supabase import Client
 from supabase_auth.errors import AuthApiError
 
-from helios_api.db.supabase import get_public_auth_supabase, get_supabase
+from helios_api.db.supabase import get_public_auth_supabase
 from helios_api.middleware.auth import get_current_user
 
 # Public endpoints — intentionally no Bearer / ``get_current_user`` dependency.
@@ -57,16 +57,25 @@ def _session_blob(session: Any, user: Any) -> dict[str, Any]:
 
 @public_router.post("/signup", status_code=status.HTTP_201_CREATED)
 def signup(body: SignupBody, supabase: Client = Depends(get_public_auth_supabase)) -> dict[str, Any]:
-    """Create auth user + profile row, then return a fresh session (JWT pair)."""
+    """Create auth user + profile row, then return a fresh session (JWT pair).
+
+    Uses ``auth.admin.create_user`` (service-role / Admin API only). Never
+    ``auth.sign_up()``, which hits the public GoTrue route and rejects a
+    service-role ``Authorization`` header with errors like ``User not allowed``.
+    """
+    payload = {
+        "email": body.email,
+        "password": body.password,
+        "email_confirm": True,
+        # Auth role for this user (GoTrue expects e.g. ``authenticated``, not profile labels).
+        "role": "authenticated",
+        "user_metadata": {
+            "full_name": body.full_name,
+            "role": body.role,
+        },
+    }
     try:
-        cu = supabase.auth.admin.create_user(
-            {
-                "email": body.email,
-                "password": body.password,
-                "email_confirm": True,
-                "user_metadata": {"full_name": body.full_name},
-            }
-        )
+        cu = supabase.auth.admin.create_user(payload)
         uid = str(cu.user.id)
     except AuthApiError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
