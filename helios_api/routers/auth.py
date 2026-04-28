@@ -13,7 +13,7 @@ from pydantic import BaseModel, EmailStr, Field
 from supabase import Client
 from supabase_auth.errors import AuthApiError
 
-from helios_api.db.supabase import get_supabase
+from helios_api.db.supabase import get_public_auth_supabase, get_supabase
 from helios_api.middleware.auth import get_current_user
 
 # Public endpoints — intentionally no Bearer / ``get_current_user`` dependency.
@@ -56,7 +56,7 @@ def _session_blob(session: Any, user: Any) -> dict[str, Any]:
 
 
 @public_router.post("/signup", status_code=status.HTTP_201_CREATED)
-def signup(body: SignupBody, supabase: Client = Depends(get_supabase)) -> dict[str, Any]:
+def signup(body: SignupBody, supabase: Client = Depends(get_public_auth_supabase)) -> dict[str, Any]:
     """Create auth user + profile row, then return a fresh session (JWT pair)."""
     try:
         cu = supabase.auth.admin.create_user(
@@ -110,7 +110,7 @@ def signup(body: SignupBody, supabase: Client = Depends(get_supabase)) -> dict[s
 
 
 @public_router.post("/login")
-def login(body: LoginBody, supabase: Client = Depends(get_supabase)) -> dict[str, Any]:
+def login(body: LoginBody, supabase: Client = Depends(get_public_auth_supabase)) -> dict[str, Any]:
     """Password grant — returns Supabase session tokens."""
     try:
         si = supabase.auth.sign_in_with_password({"email": body.email, "password": body.password})
@@ -128,7 +128,7 @@ def login(body: LoginBody, supabase: Client = Depends(get_supabase)) -> dict[str
 @public_router.post("/refresh")
 def refresh_token_route(
     body: RefreshBody,
-    supabase: Client = Depends(get_supabase),
+    supabase: Client = Depends(get_public_auth_supabase),
 ) -> dict[str, Any]:
     """Exchange refresh token for a new session."""
     try:
