@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Literal, Optional
+from typing import Any, List, Literal, Optional
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
@@ -41,9 +41,15 @@ class Settings(BaseSettings):
     ENV: Literal["development", "production", "test"] = "development"
     LOG_LEVEL: str = "info"
 
-    # --- Supabase
+    # --- Dev/testing: bypass JWT and act as mock installer user (never enable in prod)
+    BYPASS_AUTH: bool = False
+
+    # --- Supabase (service_role secret only on the server — never the anon key)
     SUPABASE_URL: Optional[str] = None
-    SUPABASE_SERVICE_KEY: Optional[str] = None
+    SUPABASE_SERVICE_KEY: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("SUPABASE_SERVICE_KEY", "SUPABASE_SERVICE_ROLE_KEY"),
+    )
     SUPABASE_JWT_SECRET: Optional[str] = None
 
     # --- AI (OpenAI client → DeepSeek; optional Qwen for global assistant)
@@ -72,6 +78,21 @@ class Settings(BaseSettings):
             "https://black-light.vercel.app",
         ],
     )
+
+    @field_validator("BYPASS_AUTH", mode="before")
+    @classmethod
+    def _coerce_bypass_auth(cls, v: Any) -> bool:
+        """Env strings like ``true`` / ``1`` / ``yes`` → ``True`` (case-insensitive)."""
+        if isinstance(v, bool):
+            return v
+        if v is None:
+            return False
+        if isinstance(v, str):
+            s = v.strip().lower()
+            if not s:
+                return False
+            return s in ("true", "1", "yes", "on")
+        return bool(v)
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated, Any, Dict, FrozenSet, Optional
 
 import jwt
@@ -12,7 +13,31 @@ from supabase import Client
 from helios_api.config import get_settings
 from helios_api.db.supabase import get_supabase
 
+logger = logging.getLogger(__name__)
+
 _security = HTTPBearer(auto_error=False)
+
+# Stable UUID for BYPASS_AUTH mock user (must match JWT ``sub`` shape / DB UUID columns).
+_MOCK_USER_ID = "10000000-0000-4000-a000-000000000042"
+
+
+def _mock_jwt_claims() -> Dict[str, Any]:
+    return {"sub": _MOCK_USER_ID, "role": "installer", "email": "mock@light.io"}
+
+
+def _mock_profile_row() -> Dict[str, Any]:
+    """Shape aligned with ``profiles`` + optional ``email`` for callers that expect it."""
+    return {
+        "id": _MOCK_USER_ID,
+        "role": "installer",
+        "full_name": "Mock Installer",
+        "company_name": None,
+        "phone": None,
+        "wallet_address": None,
+        "org_id": None,
+        "completed_projects_count": 0,
+        "email": "mock@light.io",
+    }
 
 
 def _decode_access_token(token: str) -> Dict[str, Any]:
@@ -37,11 +62,33 @@ def _decode_access_token(token: str) -> Dict[str, Any]:
     return payload
 
 
+def verify_token(
+    creds: Annotated[Optional[HTTPAuthorizationCredentials], Depends(_security)],
+) -> Dict[str, Any]:
+    """Decode Bearer JWT to claims, or return mock claims when ``BYPASS_AUTH`` is on."""
+    settings = get_settings()
+    if settings.BYPASS_AUTH:
+        return _mock_jwt_claims()
+    if creds is None or (creds.scheme or "").lower() != "bearer":
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "Missing bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return _decode_access_token(creds.credentials)
+
+
 def get_current_user(
     creds: Annotated[Optional[HTTPAuthorizationCredentials], Depends(_security)],
     supabase: Client = Depends(get_supabase),
 ) -> Dict[str, Any]:
     """Verify Bearer JWT and return the **profiles** row for ``sub``."""
+    settings = get_settings()
+    if settings.BYPASS_AUTH:
+        if settings.is_production:
+            logger.warning("BYPASS_AUTH is enabled (mock installer); do not use in production.")
+        return _mock_profile_row()
+
     if creds is None or (creds.scheme or "").lower() != "bearer":
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
@@ -83,6 +130,8 @@ get_current_admin = require_role("admin")
 
 def require_org_member(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     """Require ``profiles.org_id`` to be set (installers / org staff)."""
+    if get_settings().BYPASS_AUTH:
+        return user
     if not user.get("org_id"):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
