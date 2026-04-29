@@ -12,6 +12,7 @@ from typing import Optional
 
 from fastapi import Depends, HTTPException, Request, status
 from supabase import Client, create_client
+from supabase.lib.client_options import DEFAULT_HEADERS, SyncClientOptions
 
 from helios_api.config import Settings, get_settings
 
@@ -42,8 +43,31 @@ def get_supabase(
     return client
 
 
+def create_public_auth_supabase_client(settings: Settings) -> Client:
+    """Same service-role + headers as signup/login; callable outside FastAPI ``Depends``."""
+    supabase_url = (settings.SUPABASE_URL or "").strip()
+    service_role_key = (settings.SUPABASE_SERVICE_KEY or "").strip()
+    if not supabase_url or not service_role_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY.",
+        )
+    auth_headers = {
+        **DEFAULT_HEADERS.copy(),
+        "apikey": service_role_key,
+        "Authorization": f"Bearer {service_role_key}",
+    }
+    options = SyncClientOptions(headers=auth_headers)
+    return create_client(supabase_url, service_role_key, options=options)
+
+
 def get_public_auth_supabase(settings: Settings = Depends(get_settings)) -> Client:
     """Fresh service-role Supabase client for signup / login / refresh only.
+
+    Always uses ``SUPABASE_SERVICE_KEY`` (service_role JWT) from settings — never
+    the anon key. Passes explicit ``apikey`` + ``Authorization: Bearer …`` on the
+    client options so Auth Admin endpoints see ``service_role`` (GoTrue rejects
+    admin calls missing these roles otherwise).
 
     **Why not** ``get_supabase`` (singleton on ``app.state``)? The supabase-py
     client registers auth listeners. After ``sign_in_with_password`` /
@@ -56,9 +80,4 @@ def get_public_auth_supabase(settings: Settings = Depends(get_settings)) -> Clie
     A one-off client here means sign-in side effects never poison the app-wide
     singleton.
     """
-    if not settings.SUPABASE_URL or not settings.SUPABASE_SERVICE_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY.",
-        )
-    return create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_KEY)
+    return create_public_auth_supabase_client(settings)

@@ -11,7 +11,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from supabase import Client
 
 from helios_api.config import get_settings
-from helios_api.db.supabase import get_supabase
+from helios_api.db.supabase import create_public_auth_supabase_client, get_supabase
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,20 @@ def _mock_profile_row() -> Dict[str, Any]:
         "completed_projects_count": 0,
         "email": "mock@light.io",
     }
+
+
+def ensure_mock_org_exists(supabase: Client) -> None:
+    """When BYPASS_AUTH is on, guarantee ``orgs`` contains the mock org (FK targets for pipelines, etc.)."""
+    existing = (
+        supabase.table("orgs")
+        .select("id")
+        .eq("id", _MOCK_ORG_ID)
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        return
+    supabase.table("orgs").insert({"id": _MOCK_ORG_ID, "name": "Mock Org"}).execute()
 
 
 def _decode_access_token(token: str) -> Dict[str, Any]:
@@ -90,6 +104,8 @@ def get_current_user(
     if settings.BYPASS_AUTH:
         if settings.is_production:
             logger.warning("BYPASS_AUTH is enabled (mock installer); do not use in production.")
+        bypass_client = create_public_auth_supabase_client(settings)
+        ensure_mock_org_exists(bypass_client)
         return _mock_profile_row()
 
     uid = claims.get("sub")
