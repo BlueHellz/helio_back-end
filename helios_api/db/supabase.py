@@ -19,14 +19,29 @@ from helios_api.config import Settings, get_settings
 logger = logging.getLogger(__name__)
 
 
+def create_service_role_supabase_client(settings: Settings) -> Client:
+    """PostgREST client with explicit ``apikey`` + ``Authorization: Bearer <service_role>``."""
+    supabase_url = (settings.SUPABASE_URL or "").strip()
+    service_role_key = (settings.SUPABASE_SERVICE_KEY or "").strip()
+    auth_headers = {
+        **DEFAULT_HEADERS.copy(),
+        "apikey": service_role_key,
+        "Authorization": f"Bearer {service_role_key}",
+    }
+    options = SyncClientOptions(headers=auth_headers)
+    return create_client(supabase_url, service_role_key, options=options)
+
+
 def build_supabase_client(settings: Settings) -> Optional[Client]:
     """Create a service-role client, or ``None`` if creds are missing in dev."""
-    if not settings.SUPABASE_URL or not settings.SUPABASE_SERVICE_KEY:
+    supabase_url = (settings.SUPABASE_URL or "").strip()
+    service_role_key = (settings.SUPABASE_SERVICE_KEY or "").strip()
+    if not supabase_url or not service_role_key:
         if settings.is_production:
             raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_KEY are required in production.")
         logger.warning("Supabase not configured: missing URL or service key (dev only).")
         return None
-    return create_client(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_KEY)
+    return create_service_role_supabase_client(settings)
 
 
 def get_supabase(
@@ -69,10 +84,4 @@ def get_public_auth_supabase(settings: Settings = Depends(get_settings)) -> Clie
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY.",
         )
-    auth_headers = {
-        **DEFAULT_HEADERS.copy(),
-        "apikey": service_role_key,
-        "Authorization": f"Bearer {service_role_key}",
-    }
-    options = SyncClientOptions(headers=auth_headers)
-    return create_client(supabase_url, service_role_key, options=options)
+    return create_service_role_supabase_client(settings)

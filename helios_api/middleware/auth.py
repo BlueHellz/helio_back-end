@@ -11,7 +11,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from supabase import Client
 
 from helios_api.config import get_settings
-from helios_api.db.supabase import get_public_auth_supabase, get_supabase
+from helios_api.db.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
 
@@ -98,14 +98,13 @@ def verify_token(
 def get_current_user(
     claims: Dict[str, Any] = Depends(verify_token),
     supabase: Client = Depends(get_supabase),
-    auth_supabase: Client = Depends(get_public_auth_supabase),
 ) -> Dict[str, Any]:
     """Verify Bearer JWT and return the **profiles** row for ``sub``."""
     settings = get_settings()
     if settings.BYPASS_AUTH:
         if settings.is_production:
             logger.warning("BYPASS_AUTH is enabled (mock installer); do not use in production.")
-        ensure_mock_org_exists(auth_supabase)
+        ensure_mock_org_exists(supabase)
         return _mock_profile_row()
 
     uid = claims.get("sub")
