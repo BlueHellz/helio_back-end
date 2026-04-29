@@ -43,24 +43,6 @@ def get_supabase(
     return client
 
 
-def create_public_auth_supabase_client(settings: Settings) -> Client:
-    """Same service-role + headers as signup/login; callable outside FastAPI ``Depends``."""
-    supabase_url = (settings.SUPABASE_URL or "").strip()
-    service_role_key = (settings.SUPABASE_SERVICE_KEY or "").strip()
-    if not supabase_url or not service_role_key:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY.",
-        )
-    auth_headers = {
-        **DEFAULT_HEADERS.copy(),
-        "apikey": service_role_key,
-        "Authorization": f"Bearer {service_role_key}",
-    }
-    options = SyncClientOptions(headers=auth_headers)
-    return create_client(supabase_url, service_role_key, options=options)
-
-
 def get_public_auth_supabase(settings: Settings = Depends(get_settings)) -> Client:
     """Fresh service-role Supabase client for signup / login / refresh only.
 
@@ -80,4 +62,17 @@ def get_public_auth_supabase(settings: Settings = Depends(get_settings)) -> Clie
     A one-off client here means sign-in side effects never poison the app-wide
     singleton.
     """
-    return create_public_auth_supabase_client(settings)
+    supabase_url = (settings.SUPABASE_URL or "").strip()
+    service_role_key = (settings.SUPABASE_SERVICE_KEY or "").strip()
+    if not supabase_url or not service_role_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Supabase is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY.",
+        )
+    auth_headers = {
+        **DEFAULT_HEADERS.copy(),
+        "apikey": service_role_key,
+        "Authorization": f"Bearer {service_role_key}",
+    }
+    options = SyncClientOptions(headers=auth_headers)
+    return create_client(supabase_url, service_role_key, options=options)
