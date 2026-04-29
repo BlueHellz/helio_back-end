@@ -15,10 +15,12 @@ from helios_api.db.supabase import get_supabase
 
 logger = logging.getLogger(__name__)
 
+# Optional bearer: missing Authorization does not raise 401 here so BYPASS_AUTH can run first.
 _security = HTTPBearer(auto_error=False)
 
-# Stable UUID for BYPASS_AUTH mock user (must match JWT ``sub`` shape / DB UUID columns).
+# Stable UUIDs for BYPASS_AUTH mock user / org (must match UUID column shapes).
 _MOCK_USER_ID = "10000000-0000-4000-a000-000000000042"
+_MOCK_ORG_ID = "20000000-0000-4000-a000-000000000099"
 
 
 def _mock_jwt_claims() -> Dict[str, Any]:
@@ -34,7 +36,7 @@ def _mock_profile_row() -> Dict[str, Any]:
         "company_name": None,
         "phone": None,
         "wallet_address": None,
-        "org_id": None,
+        "org_id": _MOCK_ORG_ID,
         "completed_projects_count": 0,
         "email": "mock@light.io",
     }
@@ -65,10 +67,11 @@ def _decode_access_token(token: str) -> Dict[str, Any]:
 def verify_token(
     creds: Annotated[Optional[HTTPAuthorizationCredentials], Depends(_security)],
 ) -> Dict[str, Any]:
-    """Decode Bearer JWT to claims, or return mock claims when ``BYPASS_AUTH`` is on."""
+    """Return JWT claims; when ``BYPASS_AUTH`` is on, return mock claims without a token."""
     settings = get_settings()
     if settings.BYPASS_AUTH:
         return _mock_jwt_claims()
+
     if creds is None or (creds.scheme or "").lower() != "bearer":
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED,
@@ -79,7 +82,7 @@ def verify_token(
 
 
 def get_current_user(
-    creds: Annotated[Optional[HTTPAuthorizationCredentials], Depends(_security)],
+    claims: Dict[str, Any] = Depends(verify_token),
     supabase: Client = Depends(get_supabase),
 ) -> Dict[str, Any]:
     """Verify Bearer JWT and return the **profiles** row for ``sub``."""
@@ -89,8 +92,7 @@ def get_current_user(
             logger.warning("BYPASS_AUTH is enabled (mock installer); do not use in production.")
         return _mock_profile_row()
 
-    payload = verify_token(creds)
-    uid = payload.get("sub")
+    uid = claims.get("sub")
     if not uid:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing sub claim")
 
