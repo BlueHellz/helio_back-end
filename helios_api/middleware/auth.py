@@ -89,13 +89,7 @@ def get_current_user(
             logger.warning("BYPASS_AUTH is enabled (mock installer); do not use in production.")
         return _mock_profile_row()
 
-    if creds is None or (creds.scheme or "").lower() != "bearer":
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED,
-            "Missing bearer token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    payload = _decode_access_token(creds.credentials)
+    payload = verify_token(creds)
     uid = payload.get("sub")
     if not uid:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing sub claim")
