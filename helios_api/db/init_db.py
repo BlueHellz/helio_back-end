@@ -37,7 +37,7 @@ def _load_neon_ddl() -> str:
 
 
 def _split_sql_statements(sql: str) -> list[str]:
-    """Split on `;` respecting `--`, `/* */`, `'...'`, and dollar-quoted ``$$...$$``."""
+    """Split on `;` respecting `--`, `/* */`, `'...'`, and dollar-quoted ``$...$`` blocks."""
     stmts: list[str] = []
     buf: list[str] = []
     i = 0
@@ -133,37 +133,61 @@ def _split_sql_statements(sql: str) -> list[str]:
     return stmts
 
 
-async def _exec_ddl(conn: asyncpg.Connection, stmt: str) -> None:
-    try:
-        await conn.execute(stmt)
-    except asyncpg.PostgresError as e:
-        sqlstate = getattr(e, "sqlstate", None) or ""
-        msg = str(e).lower()
-        if sqlstate in ("42P07", "42710", "42723") or "already exists" in msg:
-            logger.debug("init_db skip (exists): %.60s…", stmt.replace("\n", " "))
-            return
-        raise
-
-
 async def init_database(pool: asyncpg.Pool) -> None:
-    """Run core DDL from ``schema.sql`` (Neon-safe subset)."""
+    """Run core DDL from ``schema.sql`` (Neon-safe subset), one statement at a time.
+
+    Each statement is isolated: failures are logged and skipped. Finally attempts
+    mock-org seed in its own try/except.
+    """
     ddl = _load_neon_ddl()
     statements = _split_sql_statements(ddl)
+    succeeded = 0
+    failed = 0
     async with pool.acquire() as conn:
-        async with conn.transaction():
-            for stmt in statements:
-                await _exec_ddl(conn, stmt)
-    logger.info("Database schema applied (%d statements)", len(statements))
+        for idx, stmt in enumerate(statements):
+            try:
+                await conn.execute(stmt)
+                succeeded += 1
+            except Exception:
+                failed += 1
+                logger.warning(
+                    "init_db statement %d/%d failed: %s",
+                    idx + 1,
+                    len(statements),
+                    stmt[:120].replace("\n", " ") + ("…" if len(stmt) > 120 else ""),
+                    exc_info=True,
+                )
+
+        try:
+            await conn.execute(
+                "INSERT INTO orgs (id, name) VALUES ($1::uuid, $2) ON CONFLICT (id) DO NOTHING",
+                MOCK_ORG_ID,
+                "Mock Org",
+            )
+        except Exception:
+            logger.warning("init_db mock org insert failed", exc_info=True)
+
+    logger.info(
+        "Database schema init finished: %d statements attempted (%d ok, %d failed); "
+        "mock org insert attempted",
+        len(statements),
+        succeeded,
+        failed,
+    )
 
 
 async def seed_mock_org(pool: asyncpg.Pool) -> None:
     """Ensure bypass mock org row exists (idempotent)."""
     async with pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO orgs (id, name) VALUES ($1::uuid, $2) ON CONFLICT (id) DO NOTHING",
-            MOCK_ORG_ID,
-            "Mock Org",
-        )
+        try:
+            await conn.execute(
+                "INSERT INTO orgs (id, name) VALUES ($1::uuid, $2) ON CONFLICT (id) DO NOTHING",
+                MOCK_ORG_ID,
+                "Mock Org",
+            )
+        except Exception:
+            logger.warning("seed_mock_org failed", exc_info=True)
+            return
     logger.info("Mock org ensured (id=%s)", MOCK_ORG_ID)
 
 
