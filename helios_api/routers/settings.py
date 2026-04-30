@@ -7,7 +7,7 @@ from typing import Any, Literal, Optional
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from helios_api.db.database import get_db, record_to_api_dict
 from helios_api.middleware.auth import require_org_member
@@ -355,8 +355,22 @@ class StageIn(BaseModel):
 
 
 class PipelineCreate(BaseModel):
-    name: str
+    name: str = Field(min_length=1)
     stages: list[StageIn] = Field(default_factory=list)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _strip_pipeline_name(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            return v.strip()
+        return v
+
+    @field_validator("stages", mode="before")
+    @classmethod
+    def _none_or_missing_stages_to_empty(cls, v: Any) -> Any:
+        if v is None:
+            return []
+        return v
 
 
 @router.post("/pipelines", status_code=status.HTTP_201_CREATED)
@@ -368,7 +382,7 @@ async def create_pipeline(
     oid = str(user["org_id"])
     async with db.transaction():
         row = await db.fetchrow(
-            "INSERT INTO pipelines (org_id, name) VALUES ($1::uuid, $2) RETURNING id",
+            "INSERT INTO pipelines (org_id, name) VALUES ($1::uuid, $2) RETURNING *",
             oid,
             body.name,
         )
@@ -386,7 +400,18 @@ async def create_pipeline(
                 st.order_index,
                 st.color,
             )
-    return {"id": pid, "name": body.name, "stages": body.stages}
+        stage_rows = await db.fetch(
+            """
+            SELECT * FROM pipeline_stages
+            WHERE pipeline_id = $1::uuid
+            ORDER BY order_index, id
+            """,
+            pid,
+        )
+
+    out = record_to_api_dict(row)
+    out["stages"] = [record_to_api_dict(s) for s in stage_rows]
+    return out
 
 
 class PipelineUpdate(BaseModel):
