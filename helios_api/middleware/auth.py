@@ -8,9 +8,9 @@ import asyncpg
 from fastapi import Depends, HTTPException, status
 
 from helios_api.db.database import get_db
+from helios_api.db.init_db import MOCK_ORG_ID
 
 _MOCK_USER_ID = "10000000-0000-4000-a000-000000000042"
-_MOCK_ORG_ID = "20000000-0000-4000-a000-000000000099"
 
 
 def mock_profile_row() -> Dict[str, Any]:
@@ -22,7 +22,7 @@ def mock_profile_row() -> Dict[str, Any]:
         "company_name": None,
         "phone": None,
         "wallet_address": None,
-        "org_id": _MOCK_ORG_ID,
+        "org_id": MOCK_ORG_ID,
         "completed_projects_count": 0,
         "email": "mock@light.io",
     }
@@ -30,12 +30,12 @@ def mock_profile_row() -> Dict[str, Any]:
 
 async def ensure_mock_org_exists(conn: asyncpg.Connection) -> None:
     """Ensure mock org exists for FK constraints (pipelines, etc.)."""
-    row = await conn.fetchrow("SELECT id FROM orgs WHERE id = $1::uuid", _MOCK_ORG_ID)
+    row = await conn.fetchrow("SELECT id FROM orgs WHERE id = $1::uuid", MOCK_ORG_ID)
     if row is not None:
         return
     await conn.execute(
         "INSERT INTO orgs (id, name) VALUES ($1::uuid, $2)",
-        _MOCK_ORG_ID,
+        MOCK_ORG_ID,
         "Mock Org",
     )
 

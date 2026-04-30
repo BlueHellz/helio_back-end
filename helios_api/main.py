@@ -24,6 +24,7 @@ from starlette.responses import JSONResponse
 
 from helios_api.config import Settings, get_settings
 from helios_api.db.database import create_pool_safe
+from helios_api.db.init_db import init_database, seed_mock_org
 from helios_api.routers import (
     auth,
     chat,
@@ -72,6 +73,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.pool = await create_pool_safe(dsn)
     if app.state.pool is not None:
         logger.info("PostgreSQL pool ready")
+        try:
+            await init_database(app.state.pool)
+            await seed_mock_org(app.state.pool)
+        except Exception:
+            logger.exception("Database schema initialization failed")
+            raise
     elif dsn:
         logger.warning("DATABASE_URL is set but pool creation failed; /health reports database unavailable")
     elif settings.is_production:
