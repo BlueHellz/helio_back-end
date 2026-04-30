@@ -3,26 +3,23 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
-from supabase import Client
+import asyncpg
 
-
-def get_balance(supabase: Client, user_id: str) -> Decimal:
-    r = (
-        supabase.table("hlio_wallets")
-        .select("balance")
-        .eq("user_id", user_id)
-        .limit(1)
-        .execute()
+from helios_api.db.database import record_to_api_dict
+async def get_balance(conn: asyncpg.Connection, user_id: str) -> Decimal:
+    r = await conn.fetchrow(
+        "SELECT balance FROM hlio_wallets WHERE user_id = $1::uuid LIMIT 1",
+        user_id,
     )
-    if not r.data:
+    if r is None:
         return Decimal("0")
-    return Decimal(str(r.data[0]["balance"] or 0))
+    return Decimal(str(r["balance"] or 0))
 
 
-def transfer_hlio(
-    supabase: Client,
+async def transfer_hlio(
+    conn: asyncpg.Connection,
     from_user_id: str,
     to_user_id: str,
     amount: Decimal,
@@ -31,52 +28,53 @@ def transfer_hlio(
     if amount <= 0:
         raise ValueError("amount must be positive")
     a = float(amount)
-    f = (
-        supabase.table("hlio_wallets")
-        .select("balance,user_id")
-        .eq("user_id", from_user_id)
-        .limit(1)
-        .execute()
+    f = await conn.fetchrow(
+        "SELECT balance, user_id FROM hlio_wallets WHERE user_id = $1::uuid LIMIT 1",
+        from_user_id,
     )
-    if not f.data:
+    if f is None:
         raise ValueError("sender wallet missing")
-    bal = Decimal(str(f.data[0]["balance"] or 0))
+    bal = Decimal(str(f["balance"] or 0))
     if bal < amount:
         raise ValueError("insufficient HLIO balance")
-    supabase.table("hlio_wallets").update({"balance": float(bal - amount)}).eq(
-        "user_id", from_user_id
-    ).execute()
-    t = (
-        supabase.table("hlio_wallets")
-        .select("balance")
-        .eq("user_id", to_user_id)
-        .limit(1)
-        .execute()
+    await conn.execute(
+        "UPDATE hlio_wallets SET balance = $2 WHERE user_id = $1::uuid",
+        from_user_id,
+        float(bal - amount),
     )
-    if t.data:
-        tb = Decimal(str(t.data[0]["balance"] or 0))
-        supabase.table("hlio_wallets").update({"balance": float(tb + amount)}).eq(
-            "user_id", to_user_id
-        ).execute()
-    else:
-        supabase.table("hlio_wallets").insert(
-            {"user_id": to_user_id, "balance": float(amount)}
-        ).execute()
-
-
-def mint_on_installation(supabase: Client, project_id: str, amount_hlio: float) -> Dict[str, Any]:
-    """Placeholder mint — inserts ``minting_events`` (chain tx_hash later)."""
-    res = (
-        supabase.table("minting_events")
-        .insert(
-            {
-                "project_id": project_id,
-                "amount_hlio": amount_hlio,
-                "tx_hash": "simulated",
-            }
+    t = await conn.fetchrow(
+        "SELECT balance FROM hlio_wallets WHERE user_id = $1::uuid LIMIT 1",
+        to_user_id,
+    )
+    if t:
+        tb = Decimal(str(t["balance"] or 0))
+        await conn.execute(
+            "UPDATE hlio_wallets SET balance = $2 WHERE user_id = $1::uuid",
+            to_user_id,
+            float(tb + amount),
         )
-        .execute()
+    else:
+        await conn.execute(
+            "INSERT INTO hlio_wallets (user_id, balance) VALUES ($1::uuid, $2)",
+            to_user_id,
+            a,
+        )
+
+
+async def mint_on_installation(
+    conn: asyncpg.Connection, project_id: str, amount_hlio: float
+) -> Dict[str, Any]:
+    """Placeholder mint — inserts ``minting_events`` (chain tx_hash later)."""
+    row = await conn.fetchrow(
+        """
+        INSERT INTO minting_events (project_id, amount_hlio, tx_hash)
+        VALUES ($1::uuid, $2, $3)
+        RETURNING *
+        """,
+        project_id,
+        amount_hlio,
+        "simulated",
     )
-    if not res.data:
+    if row is None:
         raise RuntimeError("mint insert failed")
-    return dict(res.data[0])
+    return record_to_api_dict(row)

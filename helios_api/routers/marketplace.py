@@ -2,23 +2,25 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+import asyncpg
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from helios_api.db.supabase import get_supabase
+from helios_api.db.database import get_db, record_to_api_dict
 from helios_api.middleware.auth import get_current_user
-from supabase import Client
 
 router = APIRouter(prefix="/marketplace", tags=["marketplace"])
 
 
 @router.get("/listings")
-def listings(
-    supabase: Client = Depends(get_supabase),
+async def listings(
+    db: asyncpg.Connection = Depends(get_db),
     _: dict = Depends(get_current_user),
 ) -> dict[str, Any]:
-    r = supabase.table("marketplace_listings").select("*").limit(100).execute()
-    return {"items": r.data or []}
+    rows = await db.fetch("SELECT * FROM marketplace_listings LIMIT 100")
+    return {"items": [record_to_api_dict(r) for r in rows]}
 
 
 class OrderBody(BaseModel):
@@ -28,10 +30,9 @@ class OrderBody(BaseModel):
 
 
 @router.post("/orders")
-def create_order_stub(
+async def create_order_stub(
     body: OrderBody,
     user: dict = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase),
 ) -> dict[str, Any]:
     return {
         "ok": False,

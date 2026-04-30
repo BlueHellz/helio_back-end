@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 import io
 
+import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
-from supabase import Client
 
-from helios_api.db.supabase import get_supabase
+from helios_api.db.database import get_db
 from helios_api.middleware.auth import get_current_user
 from helios_api.routers.projects import _can_access_project
 
@@ -39,9 +39,9 @@ def _pdf_bytes(project_id: str) -> bytes:
 async def download_report_pdf(
     project_id: str,
     user: dict = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> Response:
-    if _can_access_project(supabase, project_id, user) is None:
+    if await _can_access_project(db, project_id, user) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
     pdf = await asyncio.to_thread(_pdf_bytes, project_id)
     return Response(

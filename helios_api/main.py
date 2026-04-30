@@ -13,15 +13,14 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator
 
+import asyncpg
 import redis.asyncio as redis
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from supabase import Client
 
 from helios_api.config import Settings, get_settings
-from helios_api.db.supabase import build_supabase_client
 from helios_api.routers import (
     auth,
     chat,
@@ -44,7 +43,7 @@ RedisT = redis.Redis
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Startup: configure logging, connect Supabase + Redis. Shutdown: cleanup."""
+    """Startup: logging, asyncpg pool, Redis. Shutdown: cleanup."""
     settings = get_settings()
     logging.basicConfig(
         level=settings.LOG_LEVEL.upper(),
@@ -53,10 +52,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("Starting %s (env=%s)", settings.APP_NAME, settings.ENV)
 
     app.state.settings = settings
-    app.state.supabase: Optional[Client] = build_supabase_client(settings)
 
-    app.state.redis: Optional[RedisT] = None
-    r: Optional[RedisT] = None
+    dsn = (settings.DATABASE_URL or "").strip()
+    app.state.pool: asyncpg.Pool | None = None
+    if dsn:
+        try:
+            app.state.pool = await asyncpg.create_pool(dsn=dsn, min_size=1, max_size=10)
+            logger.info("PostgreSQL pool ready")
+        except Exception:
+            logger.exception("Failed to create PostgreSQL pool")
+            if settings.is_production:
+                raise
+    elif settings.is_production:
+        raise RuntimeError("DATABASE_URL is required in production")
+    else:
+        logger.warning("DATABASE_URL not set; API database calls will return 503")
+
+    app.state.redis: RedisT | None = None
+    r: RedisT | None = None
     try:
         r = redis.from_url(
             settings.REDIS_URL,
@@ -83,6 +96,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        pool: asyncpg.Pool | None = getattr(app.state, "pool", None)
+        if pool is not None:
+            await pool.close()
         if getattr(app.state, "redis", None) is not None:
             try:
                 await app.state.redis.aclose()
@@ -118,7 +134,7 @@ def _redis_safe_url(url: str) -> str:
     return url
 
 
-def create_app(settings: Optional[Settings] = None) -> FastAPI:
+def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the ASGI app (allows tests to inject settings later)."""
     if settings is None:
         settings = get_settings()

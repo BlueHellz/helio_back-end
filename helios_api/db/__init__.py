@@ -1,1 +1,1 @@
-"""Database and external data clients (Supabase, etc.)."""
+"""Database access (asyncpg pool, helpers)."""

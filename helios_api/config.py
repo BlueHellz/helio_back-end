@@ -10,15 +10,13 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, List, Literal, Optional
+from typing import Any, List, Literal
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
 _ROOT = _PACKAGE_DIR.parent
-# Load existing env files in priority order (later overrides earlier in pydantic? check - first wins in some versions)
-# pydantic-settings: first file in tuple can take precedence; we use only one merge strategy - list in order
 _ENV_FILES: tuple[str, ...] = tuple(
     str(p)
     for p in (_ROOT / ".env", _PACKAGE_DIR / ".env")
@@ -41,36 +39,29 @@ class Settings(BaseSettings):
     ENV: Literal["development", "production", "test"] = "development"
     LOG_LEVEL: str = "info"
 
-    # --- Dev/testing: bypass JWT and act as mock installer user (never enable in prod)
-    BYPASS_AUTH: bool = False
-
-    # --- Supabase (service_role secret only on the server — never the anon key)
-    SUPABASE_URL: Optional[str] = None
-    SUPABASE_SERVICE_KEY: Optional[str] = Field(
-        default=None,
-        validation_alias=AliasChoices("SUPABASE_SERVICE_KEY", "SUPABASE_SERVICE_ROLE_KEY"),
+    # --- PostgreSQL (e.g. Neon ``postgresql://...``)
+    DATABASE_URL: str = Field(
+        default="",
+        description="PostgreSQL connection URL for asyncpg",
     )
-    SUPABASE_JWT_SECRET: Optional[str] = None
 
     # --- AI (OpenAI client → DeepSeek; optional Qwen for global assistant)
-    DEEPSEEK_API_KEY: Optional[str] = None
+    DEEPSEEK_API_KEY: str | None = None
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1"
-    QWEN_API_KEY: Optional[str] = None
+    QWEN_API_KEY: str | None = None
 
     # --- External APIs
-    GOOGLE_SOLAR_API_KEY: Optional[str] = None
-    MAPBOX_ACCESS_TOKEN: Optional[str] = None
-    NREL_API_KEY: Optional[str] = None
-    TWILIO_ACCOUNT_SID: Optional[str] = None
-    TWILIO_AUTH_TOKEN: Optional[str] = None
-    TWILIO_PHONE_NUMBER: Optional[str] = None
+    GOOGLE_SOLAR_API_KEY: str | None = None
+    MAPBOX_ACCESS_TOKEN: str | None = None
+    NREL_API_KEY: str | None = None
+    TWILIO_ACCOUNT_SID: str | None = None
+    TWILIO_AUTH_TOKEN: str | None = None
+    TWILIO_PHONE_NUMBER: str | None = None
 
     # --- Infra
-    # Default: local Redis. On Render, use Upstash URL (``rediss://...`` for TLS).
     REDIS_URL: str = "redis://localhost:6379"
     SOLANA_RPC_URL: str = "https://api.devnet.solana.com"
 
-    # --- CORS: comma-separated in env, or use Python defaults.
     CORS_ORIGINS: List[str] = Field(
         default_factory=lambda: [
             "http://localhost:3000",
@@ -78,21 +69,6 @@ class Settings(BaseSettings):
             "https://black-light.vercel.app",
         ],
     )
-
-    @field_validator("BYPASS_AUTH", mode="before")
-    @classmethod
-    def _coerce_bypass_auth(cls, v: Any) -> bool:
-        """Env strings like ``true`` / ``1`` / ``yes`` → ``True`` (case-insensitive)."""
-        if isinstance(v, bool):
-            return v
-        if v is None:
-            return False
-        if isinstance(v, str):
-            s = v.strip().lower()
-            if not s:
-                return False
-            return s in ("true", "1", "yes", "on")
-        return bool(v)
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

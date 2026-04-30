@@ -5,11 +5,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+import asyncpg
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel
-from supabase import Client
 
-from helios_api.db.supabase import get_supabase
+from helios_api.db.database import get_db, record_to_api_dict
 from helios_api.middleware.auth import get_current_user
 from helios_api.routers.projects import _can_access_project
 
@@ -24,57 +24,66 @@ class SignBody(BaseModel):
 async def upload_contract(
     project_id: str,
     user: dict = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
     file: UploadFile = File(...),
 ) -> dict[str, Any]:
-    if _can_access_project(supabase, project_id, user) is None:
+    if await _can_access_project(db, project_id, user) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
     url = f"stub://storage/contracts/{project_id}/{file.filename}"
-    ins = (
-        supabase.table("contracts")
-        .insert({"project_id": project_id, "file_url": url, "status": "uploaded"})
-        .execute()
+    row = await db.fetchrow(
+        """
+        INSERT INTO contracts (project_id, file_url, status)
+        VALUES ($1::uuid, $2, $3)
+        RETURNING *
+        """,
+        project_id,
+        url,
+        "uploaded",
     )
-    if not ins.data:
+    if row is None:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Insert failed")
-    return {"contract": ins.data[0], "note": "Wire Supabase Storage upload in production."}
+    return {
+        "contract": record_to_api_dict(row),
+        "note": "Wire object storage upload in production.",
+    }
 
 
 @router.post("/{project_id}/sign")
-def sign_contract(
+async def sign_contract(
     project_id: str,
     body: SignBody,
     user: dict = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
-    if _can_access_project(supabase, project_id, user) is None:
+    if await _can_access_project(db, project_id, user) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
-    supabase.table("contracts").update(
-        {
-            "signature_data": body.signature_data,
-            "signed_at": datetime.now(timezone.utc).isoformat(),
-            "status": "signed",
-        }
-    ).eq("project_id", project_id).execute()
+    signed_at = datetime.now(timezone.utc)
+    await db.execute(
+        """
+        UPDATE contracts
+        SET signature_data = $2, signed_at = $3, status = $4
+        WHERE project_id = $1::uuid
+        """,
+        project_id,
+        body.signature_data,
+        signed_at,
+        "signed",
+    )
     return {"ok": True, "project_id": project_id}
 
 
 @router.get("/{project_id}/download")
-def download_contract(
+async def download_contract(
     project_id: str,
     user: dict = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
-    if _can_access_project(supabase, project_id, user) is None:
+    if await _can_access_project(db, project_id, user) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
-    r = (
-        supabase.table("contracts")
-        .select("*")
-        .eq("project_id", project_id)
-        .limit(1)
-        .execute()
+    r = await db.fetchrow(
+        "SELECT * FROM contracts WHERE project_id = $1::uuid LIMIT 1",
+        project_id,
     )
-    if not r.data:
+    if r is None:
         return {"file_url": None}
-    # table has no created_at in schema — order by id is ok
-    return {"file_url": r.data[0].get("file_url")}
+    return {"file_url": record_to_api_dict(r).get("file_url")}

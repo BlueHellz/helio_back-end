@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from helios_api.db.supabase import get_supabase
+from helios_api.db.database import get_db, record_to_api_dict
 from helios_api.middleware.auth import get_current_user
-from supabase import Client
 
 router = APIRouter(prefix="/pools", tags=["pools"])
 
@@ -57,9 +57,9 @@ _SEED: List[Dict[str, Any]] = [
 
 
 @router.get("")
-def list_pools(supabase: Client = Depends(get_supabase)) -> dict[str, Any]:
-    r = supabase.table("pools").select("*").limit(50).execute()
-    db_rows = list(r.data or [])
+async def list_pools(db: asyncpg.Connection = Depends(get_db)) -> dict[str, Any]:
+    rows = await db.fetch("SELECT * FROM pools LIMIT 50")
+    db_rows = [record_to_api_dict(r) for r in rows]
     merged: List[Dict[str, Any]] = _SEED.copy()
     seen = {row["id"] for row in merged}
     for row in db_rows:
@@ -71,15 +71,15 @@ def list_pools(supabase: Client = Depends(get_supabase)) -> dict[str, Any]:
 
 
 @router.get("/{pool_id}")
-def get_pool(
+async def get_pool(
     pool_id: str,
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
     _: dict = Depends(get_current_user),
 ) -> Dict[str, Any]:
     for row in _SEED:
         if row["id"] == pool_id:
             return row
-    r = supabase.table("pools").select("*").eq("id", pool_id).limit(1).execute()
-    if not r.data:
+    r = await db.fetchrow("SELECT * FROM pools WHERE id = $1::uuid LIMIT 1", pool_id)
+    if r is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Pool not found")
-    return dict(r.data[0])
+    return record_to_api_dict(r)

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Literal, Optional
 
+import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
-from supabase import Client
 
-from helios_api.db.supabase import get_supabase
+from helios_api.db.database import get_db, record_to_api_dict
 from helios_api.middleware.auth import require_org_member
 
 router = APIRouter(prefix="/org", tags=["settings"])
@@ -32,19 +33,19 @@ FieldType = Literal[
 ]
 
 
-def _org(supabase: Client, org_id: str) -> dict[str, Any]:
-    r = supabase.table("orgs").select("*").eq("id", org_id).limit(1).execute()
-    if not r.data:
+async def _org(db: asyncpg.Connection, org_id: str) -> dict[str, Any]:
+    r = await db.fetchrow("SELECT * FROM orgs WHERE id = $1::uuid LIMIT 1", org_id)
+    if r is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Organization not found")
-    return dict(r.data[0])
+    return record_to_api_dict(r)
 
 
 @router.get("")
-def get_org(
+async def get_org(
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
-    return _org(supabase, str(user["org_id"]))
+    return await _org(db, str(user["org_id"]))
 
 
 class OrgUpdate(BaseModel):
@@ -52,30 +53,27 @@ class OrgUpdate(BaseModel):
 
 
 @router.put("")
-def put_org(
+async def put_org(
     body: OrgUpdate,
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     oid = str(user["org_id"])
-    supabase.table("orgs").update({"name": body.name}).eq("id", oid).execute()
-    return _org(supabase, oid)
+    await db.execute("UPDATE orgs SET name = $2 WHERE id = $1::uuid", oid, body.name)
+    return await _org(db, oid)
 
 
 @router.get("/custom-fields")
-def list_custom_fields(
+async def list_custom_fields(
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     oid = str(user["org_id"])
-    r = (
-        supabase.table("custom_field_definitions")
-        .select("*")
-        .eq("org_id", oid)
-        .order("sort_order")
-        .execute()
+    rows = await db.fetch(
+        "SELECT * FROM custom_field_definitions WHERE org_id = $1::uuid ORDER BY sort_order",
+        oid,
     )
-    return {"items": r.data or []}
+    return {"items": [record_to_api_dict(r) for r in rows]}
 
 
 class CustomFieldCreate(BaseModel):
@@ -90,17 +88,35 @@ class CustomFieldCreate(BaseModel):
 
 
 @router.post("/custom-fields", status_code=status.HTTP_201_CREATED)
-def create_custom_field(
+async def create_custom_field(
     body: CustomFieldCreate,
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     oid = str(user["org_id"])
-    row = {**body.model_dump(), "org_id": oid}
-    ins = supabase.table("custom_field_definitions").insert(row).execute()
-    if not ins.data:
+    d = body.model_dump()
+    row = await db.fetchrow(
+        """
+        INSERT INTO custom_field_definitions (
+            org_id, name, field_type, options, is_global, target_sections,
+            visibility_rules, sort_order, required
+        ) VALUES (
+            $1::uuid, $2, $3, $4::jsonb, $5, $6::jsonb, $7::jsonb, $8, $9
+        ) RETURNING *
+        """,
+        oid,
+        d["name"],
+        d["field_type"],
+        json.dumps(d["options"]),
+        d["is_global"],
+        json.dumps(d["target_sections"]),
+        json.dumps(d["visibility_rules"]),
+        d["sort_order"],
+        d["required"],
+    )
+    if row is None:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Insert failed")
-    return dict(ins.data[0])
+    return record_to_api_dict(row)
 
 
 class CustomFieldUpdate(BaseModel):
@@ -115,47 +131,65 @@ class CustomFieldUpdate(BaseModel):
 
 
 @router.put("/custom-fields/{field_id}")
-def update_custom_field(
+async def update_custom_field(
     field_id: str,
     body: CustomFieldUpdate,
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     oid = str(user["org_id"])
     patch = {k: v for k, v in body.model_dump(exclude_unset=True).items()}
     if not patch:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No fields")
-    r = (
-        supabase.table("custom_field_definitions")
-        .update(patch)
-        .eq("id", field_id)
-        .eq("org_id", oid)
-        .execute()
-    )
-    if not r.data:
+    json_cols = {"options", "target_sections", "visibility_rules"}
+    sets: list[str] = []
+    args: list[Any] = [field_id, oid]
+    i = 3
+    for col, val in patch.items():
+        if col in json_cols:
+            sets.append(f"{col} = ${i}::jsonb")
+            args.append(json.dumps(val))
+        else:
+            sets.append(f"{col} = ${i}")
+            args.append(val)
+        i += 1
+    sql = f"""
+        UPDATE custom_field_definitions SET {", ".join(sets)}
+        WHERE id = $1::uuid AND org_id = $2::uuid
+        RETURNING *
+    """
+    row = await db.fetchrow(sql, *args)
+    if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Field not found")
-    return dict(r.data[0])
+    return record_to_api_dict(row)
 
 
 @router.delete("/custom-fields/{field_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
-def delete_custom_field(
+async def delete_custom_field(
     field_id: str,
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> Response:
     oid = str(user["org_id"])
-    supabase.table("custom_field_definitions").delete().eq("id", field_id).eq("org_id", oid).execute()
+    await db.execute(
+        "DELETE FROM custom_field_definitions WHERE id = $1::uuid AND org_id = $2::uuid",
+        field_id,
+        oid,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/roles")
-def list_org_roles(
+async def list_org_roles(
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     oid = str(user["org_id"])
-    r = supabase.table("custom_roles").select("*").eq("org_id", oid).execute()
-    return {"items": r.data or []}
+    rows = await db.fetch(
+        "SELECT * FROM custom_roles WHERE org_id = $1::uuid",
+        oid,
+    )
+    return {"items": [record_to_api_dict(r) for r in rows]}
 
 
 class CustomRoleCreate(BaseModel):
@@ -165,34 +199,35 @@ class CustomRoleCreate(BaseModel):
 
 
 @router.post("/roles", status_code=status.HTTP_201_CREATED)
-def create_org_role(
+async def create_org_role(
     body: CustomRoleCreate,
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     oid = str(user["org_id"])
-    existing = supabase.table("custom_roles").select("id").eq("org_id", oid).execute()
-    n = len(existing.data or [])
-    if n >= FREE_TIER_MAX_CUSTOM_ROLES:
+    n = await db.fetchval(
+        "SELECT count(*) FROM custom_roles WHERE org_id = $1::uuid",
+        oid,
+    )
+    if (n or 0) >= FREE_TIER_MAX_CUSTOM_ROLES:
         raise HTTPException(
             status.HTTP_402_PAYMENT_REQUIRED,
             f"Maximum of {FREE_TIER_MAX_CUSTOM_ROLES} custom roles on free tier",
         )
-    ins = (
-        supabase.table("custom_roles")
-        .insert(
-            {
-                "org_id": oid,
-                "name": body.name,
-                "permissions": body.permissions,
-                "is_default": body.is_default,
-            }
-        )
-        .execute()
+    row = await db.fetchrow(
+        """
+        INSERT INTO custom_roles (org_id, name, permissions, is_default)
+        VALUES ($1::uuid, $2, $3::jsonb, $4)
+        RETURNING *
+        """,
+        oid,
+        body.name,
+        json.dumps(body.permissions),
+        body.is_default,
     )
-    if not ins.data:
+    if row is None:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Insert failed")
-    return dict(ins.data[0])
+    return record_to_api_dict(row)
 
 
 class CustomRoleUpdate(BaseModel):
@@ -202,56 +237,74 @@ class CustomRoleUpdate(BaseModel):
 
 
 @router.put("/roles/{role_id}")
-def update_org_role(
+async def update_org_role(
     role_id: str,
     body: CustomRoleUpdate,
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     oid = str(user["org_id"])
     patch = {k: v for k, v in body.model_dump(exclude_unset=True).items()}
-    r = (
-        supabase.table("custom_roles")
-        .update(patch)
-        .eq("id", role_id)
-        .eq("org_id", oid)
-        .execute()
+    if not patch:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No fields")
+    sets: list[str] = []
+    args: list[Any] = [role_id, oid]
+    i = 3
+    for col, val in patch.items():
+        if col == "permissions":
+            sets.append(f"{col} = ${i}::jsonb")
+            args.append(json.dumps(val))
+        else:
+            sets.append(f"{col} = ${i}")
+            args.append(val)
+        i += 1
+    row = await db.fetchrow(
+        f"UPDATE custom_roles SET {', '.join(sets)} WHERE id = $1::uuid AND org_id = $2::uuid RETURNING *",
+        *args,
     )
-    if not r.data:
+    if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Role not found")
-    return dict(r.data[0])
+    return record_to_api_dict(row)
 
 
 @router.delete("/roles/{role_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
-def delete_org_role(
+async def delete_org_role(
     role_id: str,
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> Response:
     oid = str(user["org_id"])
-    supabase.table("custom_roles").delete().eq("id", role_id).eq("org_id", oid).execute()
+    await db.execute(
+        "DELETE FROM custom_roles WHERE id = $1::uuid AND org_id = $2::uuid",
+        role_id,
+        oid,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/users/{assign_user_id}/assign-role", status_code=status.HTTP_201_CREATED)
-def assign_user_role(
+async def assign_user_role(
     assign_user_id: str,
     role_id: str = Query(..., description="custom_roles.id"),
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     oid = str(user["org_id"])
-    cr = (
-        supabase.table("custom_roles")
-        .select("id")
-        .eq("id", role_id)
-        .eq("org_id", oid)
-        .limit(1)
-        .execute()
+    cr = await db.fetchrow(
+        "SELECT id FROM custom_roles WHERE id = $1::uuid AND org_id = $2::uuid LIMIT 1",
+        role_id,
+        oid,
     )
-    if not cr.data:
+    if cr is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Role not in this org")
-    supabase.table("user_roles").insert({"user_id": assign_user_id, "role_id": role_id}).execute()
+    await db.execute(
+        """
+        INSERT INTO user_roles (user_id, role_id) VALUES ($1::uuid, $2::uuid)
+        ON CONFLICT (user_id, role_id) DO NOTHING
+        """,
+        assign_user_id,
+        role_id,
+    )
     return {"user_id": assign_user_id, "role_id": role_id}
 
 
@@ -260,36 +313,39 @@ def assign_user_role(
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
 )
-def remove_user_role(
+async def remove_user_role(
     assign_user_id: str,
     role_id: str,
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> Response:
     oid = str(user["org_id"])
-    cr = (
-        supabase.table("custom_roles")
-        .select("id")
-        .eq("id", role_id)
-        .eq("org_id", oid)
-        .limit(1)
-        .execute()
+    cr = await db.fetchrow(
+        "SELECT id FROM custom_roles WHERE id = $1::uuid AND org_id = $2::uuid LIMIT 1",
+        role_id,
+        oid,
     )
-    if not cr.data:
+    if cr is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Role not in this org")
-    supabase.table("user_roles").delete().eq("user_id", assign_user_id).eq(
-        "role_id", role_id
-    ).execute()
+    await db.execute(
+        "DELETE FROM user_roles WHERE user_id = $1::uuid AND role_id = $2::uuid",
+        assign_user_id,
+        role_id,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
+
 @router.get("/pipelines")
-def list_pipelines(
+async def list_pipelines(
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     oid = str(user["org_id"])
-    r = supabase.table("pipelines").select("*").eq("org_id", oid).execute()
-    return {"items": r.data or []}
+    rows = await db.fetch(
+        "SELECT * FROM pipelines WHERE org_id = $1::uuid",
+        oid,
+    )
+    return {"items": [record_to_api_dict(r) for r in rows]}
 
 
 class StageIn(BaseModel):
@@ -304,25 +360,32 @@ class PipelineCreate(BaseModel):
 
 
 @router.post("/pipelines", status_code=status.HTTP_201_CREATED)
-def create_pipeline(
+async def create_pipeline(
     body: PipelineCreate,
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     oid = str(user["org_id"])
-    ins = supabase.table("pipelines").insert({"org_id": oid, "name": body.name}).execute()
-    if not ins.data:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Pipeline insert failed")
-    pid = str(ins.data[0]["id"])
-    for st in body.stages:
-        supabase.table("pipeline_stages").insert(
-            {
-                "pipeline_id": pid,
-                "name": st.name,
-                "order_index": st.order_index,
-                "color": st.color,
-            }
-        ).execute()
+    async with db.transaction():
+        row = await db.fetchrow(
+            "INSERT INTO pipelines (org_id, name) VALUES ($1::uuid, $2) RETURNING id",
+            oid,
+            body.name,
+        )
+        if row is None:
+            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Pipeline insert failed")
+        pid = str(row["id"])
+        for st in body.stages:
+            await db.execute(
+                """
+                INSERT INTO pipeline_stages (pipeline_id, name, order_index, color)
+                VALUES ($1::uuid, $2, $3, $4)
+                """,
+                pid,
+                st.name,
+                st.order_index,
+                st.color,
+            )
     return {"id": pid, "name": body.name, "stages": body.stages}
 
 
@@ -331,130 +394,126 @@ class PipelineUpdate(BaseModel):
 
 
 @router.put("/pipelines/{pipeline_id}")
-def update_pipeline(
+async def update_pipeline(
     pipeline_id: str,
     body: PipelineUpdate,
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     oid = str(user["org_id"])
     patch = {k: v for k, v in body.model_dump(exclude_unset=True).items()}
     if not patch:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No fields")
-    r = (
-        supabase.table("pipelines")
-        .update(patch)
-        .eq("id", pipeline_id)
-        .eq("org_id", oid)
-        .execute()
+    row = await db.fetchrow(
+        "UPDATE pipelines SET name = $3 WHERE id = $1::uuid AND org_id = $2::uuid RETURNING *",
+        pipeline_id,
+        oid,
+        patch["name"],
     )
-    if not r.data:
+    if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Pipeline not found")
-    return dict(r.data[0])
+    return record_to_api_dict(row)
 
 
 @router.delete("/pipelines/{pipeline_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
-def delete_pipeline(
+async def delete_pipeline(
     pipeline_id: str,
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> Response:
     oid = str(user["org_id"])
-    supabase.table("pipelines").delete().eq("id", pipeline_id).eq("org_id", oid).execute()
+    await db.execute(
+        "DELETE FROM pipelines WHERE id = $1::uuid AND org_id = $2::uuid",
+        pipeline_id,
+        oid,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/pipelines/{pipeline_id}/stages")
-def list_stages(
+async def list_stages(
     pipeline_id: str,
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     oid = str(user["org_id"])
-    pl = (
-        supabase.table("pipelines")
-        .select("id")
-        .eq("id", pipeline_id)
-        .eq("org_id", oid)
-        .limit(1)
-        .execute()
+    pl = await db.fetchrow(
+        "SELECT id FROM pipelines WHERE id = $1::uuid AND org_id = $2::uuid LIMIT 1",
+        pipeline_id,
+        oid,
     )
-    if not pl.data:
+    if pl is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Pipeline not found")
-    r = (
-        supabase.table("pipeline_stages")
-        .select("*")
-        .eq("pipeline_id", pipeline_id)
-        .order("order_index")
-        .execute()
+    rows = await db.fetch(
+        "SELECT * FROM pipeline_stages WHERE pipeline_id = $1::uuid ORDER BY order_index",
+        pipeline_id,
     )
-    return {"items": r.data or []}
+    return {"items": [record_to_api_dict(r) for r in rows]}
 
 
 @router.post("/pipelines/{pipeline_id}/stages", status_code=status.HTTP_201_CREATED)
-def add_stage(
+async def add_stage(
     pipeline_id: str,
     body: StageIn,
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     oid = str(user["org_id"])
-    pl = (
-        supabase.table("pipelines")
-        .select("id")
-        .eq("id", pipeline_id)
-        .eq("org_id", oid)
-        .limit(1)
-        .execute()
+    pl = await db.fetchrow(
+        "SELECT id FROM pipelines WHERE id = $1::uuid AND org_id = $2::uuid LIMIT 1",
+        pipeline_id,
+        oid,
     )
-    if not pl.data:
+    if pl is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Pipeline not found")
-    ins = (
-        supabase.table("pipeline_stages")
-        .insert(
-            {
-                "pipeline_id": pipeline_id,
-                "name": body.name,
-                "order_index": body.order_index,
-                "color": body.color,
-            }
-        )
-        .execute()
+    row = await db.fetchrow(
+        """
+        INSERT INTO pipeline_stages (pipeline_id, name, order_index, color)
+        VALUES ($1::uuid, $2, $3, $4)
+        RETURNING *
+        """,
+        pipeline_id,
+        body.name,
+        body.order_index,
+        body.color,
     )
-    if not ins.data:
+    if row is None:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Insert failed")
-    return dict(ins.data[0])
+    return record_to_api_dict(row)
 
 
 @router.put("/pipelines/{pipeline_id}/stages/{stage_id}")
-def update_stage(
+async def update_stage(
     pipeline_id: str,
     stage_id: str,
     body: StageIn,
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     oid = str(user["org_id"])
-    pl = (
-        supabase.table("pipelines")
-        .select("id")
-        .eq("id", pipeline_id)
-        .eq("org_id", oid)
-        .limit(1)
-        .execute()
+    pl = await db.fetchrow(
+        "SELECT id FROM pipelines WHERE id = $1::uuid AND org_id = $2::uuid LIMIT 1",
+        pipeline_id,
+        oid,
     )
-    if not pl.data:
+    if pl is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Pipeline not found")
-    r = (
-        supabase.table("pipeline_stages")
-        .update({"name": body.name, "order_index": body.order_index, "color": body.color})
-        .eq("id", stage_id)
-        .eq("pipeline_id", pipeline_id)
-        .execute()
+    row = await db.fetchrow(
+        """
+        UPDATE pipeline_stages
+        SET name = $3, order_index = $4, color = $5
+        WHERE id = $1::uuid AND pipeline_id = $2::uuid
+        RETURNING *
+        """,
+        stage_id,
+        pipeline_id,
+        body.name,
+        body.order_index,
+        body.color,
     )
-    if not r.data:
+    if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Stage not found")
-    return dict(r.data[0])
+    return record_to_api_dict(row)
 
 
 @router.delete(
@@ -462,35 +521,35 @@ def update_stage(
     status_code=status.HTTP_204_NO_CONTENT,
     response_class=Response,
 )
-def delete_stage(
+async def delete_stage(
     pipeline_id: str,
     stage_id: str,
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> Response:
     oid = str(user["org_id"])
-    pl = (
-        supabase.table("pipelines")
-        .select("id")
-        .eq("id", pipeline_id)
-        .eq("org_id", oid)
-        .limit(1)
-        .execute()
+    pl = await db.fetchrow(
+        "SELECT id FROM pipelines WHERE id = $1::uuid AND org_id = $2::uuid LIMIT 1",
+        pipeline_id,
+        oid,
     )
-    if not pl.data:
+    if pl is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Pipeline not found")
-    supabase.table("pipeline_stages").delete().eq("id", stage_id).eq(
-        "pipeline_id", pipeline_id
-    ).execute()
+    await db.execute(
+        "DELETE FROM pipeline_stages WHERE id = $1::uuid AND pipeline_id = $2::uuid",
+        stage_id,
+        pipeline_id,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
+
 @router.get("/design-mode")
-def get_design_mode(
+async def get_design_mode(
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, bool]:
     oid = str(user["org_id"])
-    o = _org(supabase, oid)
+    o = await _org(db, oid)
     return {"design_mode": bool(o.get("design_mode", False))}
 
 
@@ -499,45 +558,61 @@ class DesignModeBody(BaseModel):
 
 
 @router.put("/design-mode")
-def put_design_mode(
+async def put_design_mode(
     body: DesignModeBody,
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, bool]:
     oid = str(user["org_id"])
-    supabase.table("orgs").update({"design_mode": body.design_mode}).eq("id", oid).execute()
+    await db.execute(
+        "UPDATE orgs SET design_mode = $2 WHERE id = $1::uuid",
+        oid,
+        body.design_mode,
+    )
     return {"design_mode": body.design_mode}
 
 
 @router.post("/layout/{section}")
-def save_layout(
+async def save_layout(
     section: str,
     body: dict[str, Any],
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     oid = str(user["org_id"])
-    supabase.table("org_layouts").upsert(
-        {"org_id": oid, "section": section, "layout": body}, on_conflict="org_id,section"
-    ).execute()
+    await db.execute(
+        """
+        INSERT INTO org_layouts (org_id, section, layout, updated_at)
+        VALUES ($1::uuid, $2, $3::jsonb, now())
+        ON CONFLICT (org_id, section) DO UPDATE SET
+            layout = EXCLUDED.layout,
+            updated_at = now()
+        """,
+        oid,
+        section,
+        json.dumps(body),
+    )
     return {"org_id": oid, "section": section, "saved": True}
 
 
 @router.get("/layout/{section}")
-def get_layout(
+async def get_layout(
     section: str,
     user: dict = Depends(require_org_member),
-    supabase: Client = Depends(get_supabase),
+    db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     oid = str(user["org_id"])
-    r = (
-        supabase.table("org_layouts")
-        .select("*")
-        .eq("org_id", oid)
-        .eq("section", section)
-        .limit(1)
-        .execute()
+    r = await db.fetchrow(
+        """
+        SELECT layout FROM org_layouts
+        WHERE org_id = $1::uuid AND section = $2 LIMIT 1
+        """,
+        oid,
+        section,
     )
-    if not r.data:
+    if r is None:
         return {"layout": {}}
-    return {"layout": r.data[0].get("layout", {})}
+    lay = r["layout"]
+    if isinstance(lay, str):
+        lay = json.loads(lay)
+    return {"layout": lay or {}}
