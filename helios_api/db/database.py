@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncGenerator
 from datetime import datetime
 from decimal import Decimal
@@ -10,6 +11,8 @@ from uuid import UUID
 
 import asyncpg
 from fastapi import HTTPException, Request, status
+
+logger = logging.getLogger(__name__)
 
 
 def record_to_api_dict(r: asyncpg.Record) -> dict[str, Any]:
@@ -33,6 +36,23 @@ def _jsonable(v: Any) -> Any:
     return v
 
 
+async def create_pool_safe(
+    dsn: str,
+    *,
+    min_size: int = 1,
+    max_size: int = 10,
+) -> asyncpg.Pool | None:
+    """Create a pool or return ``None`` on failure (server stays up)."""
+    cleaned = (dsn or "").strip()
+    if not cleaned:
+        return None
+    try:
+        return await asyncpg.create_pool(dsn=cleaned, min_size=min_size, max_size=max_size)
+    except Exception:
+        logger.exception("asyncpg.create_pool failed; continuing without DB pool")
+        return None
+
+
 async def get_db(request: Request) -> AsyncGenerator[asyncpg.Connection, None]:
     pool: asyncpg.Pool | None = getattr(request.app.state, "pool", None)
     if pool is None:
@@ -44,4 +64,4 @@ async def get_db(request: Request) -> AsyncGenerator[asyncpg.Connection, None]:
         yield conn
 
 
-__all__ = ["get_db", "record_to_api_dict"]
+__all__ = ["create_pool_safe", "get_db", "record_to_api_dict"]

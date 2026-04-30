@@ -13,14 +13,17 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
-import asyncpg
 import redis.asyncio as redis
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from helios_api.config import Settings, get_settings
+from helios_api.db.database import create_pool_safe
 from helios_api.routers import (
     auth,
     chat,
@@ -41,6 +44,18 @@ logger = logging.getLogger(__name__)
 RedisT = redis.Redis
 
 
+def _error_cors_headers() -> dict[str, str]:
+    """Broad ACAO for error JSON so browsers surface status/body instead of opaque CORS failures.
+
+    Uses ``*`` only (no ``Access-Control-Allow-Credentials``) so the combination stays spec-valid.
+    """
+    return {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "*",
+        "Access-Control-Allow-Headers": "*",
+    }
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Startup: logging, asyncpg pool, Redis. Shutdown: cleanup."""
@@ -54,17 +69,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.settings = settings
 
     dsn = (settings.DATABASE_URL or "").strip()
-    app.state.pool: asyncpg.Pool | None = None
-    if dsn:
-        try:
-            app.state.pool = await asyncpg.create_pool(dsn=dsn, min_size=1, max_size=10)
-            logger.info("PostgreSQL pool ready")
-        except Exception:
-            logger.exception("Failed to create PostgreSQL pool")
-            if settings.is_production:
-                raise
+    app.state.pool = await create_pool_safe(dsn)
+    if app.state.pool is not None:
+        logger.info("PostgreSQL pool ready")
+    elif dsn:
+        logger.warning("DATABASE_URL is set but pool creation failed; /health reports database unavailable")
     elif settings.is_production:
-        raise RuntimeError("DATABASE_URL is required in production")
+        logger.warning("DATABASE_URL is empty in production; API database routes will return 503")
     else:
         logger.warning("DATABASE_URL not set; API database calls will return 503")
 
@@ -96,7 +107,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        pool: asyncpg.Pool | None = getattr(app.state, "pool", None)
+        pool = getattr(app.state, "pool", None)
         if pool is not None:
             await pool.close()
         if getattr(app.state, "redis", None) is not None:
@@ -145,7 +156,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Starlette CORS: must be added so preflight (OPTIONS) and responses get ACAO headers.
     cors_origins: list[str] = list(settings.CORS_ORIGINS)
     app.add_middleware(
         CORSMiddleware,
@@ -155,9 +165,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+        body: Any = exc.detail
+        if isinstance(body, str):
+            content: dict[str, Any] = {"detail": body}
+        else:
+            content = {"detail": body}
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=content,
+            headers=_error_cors_headers(),
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": exc.errors()},
+            headers=_error_cors_headers(),
+        )
+
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        logger.exception("Unhandled exception during request")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error"},
+            headers=_error_cors_headers(),
+        )
+
     @app.get("/health", tags=["health"], summary="Liveness probe")
-    async def health() -> dict[str, str]:
-        return {"status": "ok"}
+    async def health(request: Request) -> dict[str, str]:
+        pool_ok = getattr(request.app.state, "pool", None) is not None
+        if pool_ok:
+            return {"status": "ok", "database": "connected"}
+        return {
+            "status": "degraded",
+            "database": "unavailable",
+            "warning": "PostgreSQL pool is not available; check DATABASE_URL and logs",
+        }
 
     api = "/api/v1"
     app.include_router(debug.router, prefix=api)
