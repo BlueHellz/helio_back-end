@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, List, Literal
+from typing import List, Literal, Self
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
@@ -73,11 +73,28 @@ class Settings(BaseSettings):
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def _parse_cors(cls, v: object) -> object:
-        if v is None or (isinstance(v, str) and not v.strip()):
+        if v is None:
             return v
         if isinstance(v, str):
+            if not v.strip():
+                return []
             return [o.strip() for o in v.split(",") if o.strip()]
         return v
+
+    @model_validator(mode="after")
+    def _cors_nonempty(self) -> Self:
+        """Env typos / empty ``CORS_ORIGINS`` must not disable all cross-origin access."""
+        if not self.CORS_ORIGINS:
+            object.__setattr__(
+                self,
+                "CORS_ORIGINS",
+                [
+                    "http://localhost:3000",
+                    "http://localhost:8080",
+                    "https://black-light.vercel.app",
+                ],
+            )
+        return self
 
     @property
     def is_production(self) -> bool:

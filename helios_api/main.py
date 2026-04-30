@@ -145,9 +145,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
 
+    # Starlette CORS: must be added so preflight (OPTIONS) and responses get ACAO headers.
+    cors_origins: list[str] = list(settings.CORS_ORIGINS)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.CORS_ORIGINS,
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
