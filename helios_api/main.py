@@ -25,8 +25,8 @@ from starlette.responses import JSONResponse
 from helios_api.config import Settings, get_settings
 from helios_api.db.database import create_pool_safe
 from helios_api.db.init_db import init_database
+from helios_api.routers import ai_config
 from helios_api.routers import (
-    ai_config,
     auth,
     chat,
     contracts,
