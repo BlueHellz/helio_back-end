@@ -26,6 +26,7 @@ from helios_api.config import Settings, get_settings
 from helios_api.db.database import create_pool_safe
 from helios_api.db.init_db import init_database
 from helios_api.routers import (
+    ai_config,
     auth,
     chat,
     contracts,
@@ -228,6 +229,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(pools.router, prefix=api)
     app.include_router(wallet.router, prefix=api)
     app.include_router(marketplace.router, prefix=api)
+    app.include_router(ai_config.router, prefix=api)
 
     return app
 

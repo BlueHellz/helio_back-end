@@ -70,6 +70,18 @@ CREATE TABLE user_roles (
     PRIMARY KEY (user_id, role_id)
 );
 
+CREATE TABLE custom_component_definitions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    component_type TEXT NOT NULL,
+    props JSONB DEFAULT '{}',
+    target_sections JSONB DEFAULT '[]',
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX idx_custom_component_definitions_org_id ON custom_component_definitions(org_id);
+
 -- ─── projects ─────────────────────────────────────────────────────────────────
 CREATE TABLE projects (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
