@@ -39,6 +39,15 @@ class Settings(BaseSettings):
     ENV: Literal["development", "production", "test"] = "development"
     LOG_LEVEL: str = "info"
 
+    # --- Auth (homeowner JWT vs dev bypass)
+    # ``BYPASS_AUTH``: unset = auto (bypass off in production, on in development);
+    # explicit true/false strings override the default.
+    BYPASS_AUTH: str | None = None
+    JWT_SECRET: str = ""
+    JWT_ALGORITHM: str = "HS256"
+    JWT_ACCESS_SECONDS: int = 86400
+    JWT_REFRESH_SECONDS: int = 604800
+
     # --- PostgreSQL (e.g. Neon ``postgresql://...``)
     DATABASE_URL: str = Field(
         default="",

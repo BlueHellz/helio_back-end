@@ -21,6 +21,19 @@ class ChatBody(BaseModel):
     message: str = Field(min_length=1)
 
 
+@router.post("")
+async def chat_sse_guest(body: ChatBody) -> StreamingResponse:
+    """Auth-free conversational stream without a persisted project."""
+
+    async def events() -> AsyncIterator[bytes]:
+        async for token in run_limye_chat("guest", body.message):
+            payload = json.dumps({"token": token})
+            yield f"data: {payload}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+
+    return StreamingResponse(events(), media_type="text/event-stream")
+
+
 @router.post("/{project_id}")
 async def chat_sse(
     project_id: str,

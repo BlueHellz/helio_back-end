@@ -7,10 +7,21 @@ from pathlib import Path
 
 import asyncpg
 
+from limye_api.middleware.auth import MOCK_HOMEOWNER_USER_ID
+
 logger = logging.getLogger(__name__)
 
 # Must match ``middleware.auth`` mock installer org.
 MOCK_ORG_ID = "20000000-0000-4000-a000-000000000099"
+
+_HOMEOWNER_AUTH_DDL = (
+    "ALTER TABLE profiles ADD COLUMN IF NOT EXISTS email TEXT",
+    "ALTER TABLE profiles ADD COLUMN IF NOT EXISTS password_hash TEXT",
+    (
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_email_lower "
+        "ON profiles (lower(email)) WHERE email IS NOT NULL"
+    ),
+)
 
 # Strip Supabase-only RLS block (uses ``authenticated`` role and ``auth.uid()``).
 RLS_BLOCK_MARKER = (
@@ -166,6 +177,39 @@ async def init_database(pool: asyncpg.Pool) -> None:
             )
         except Exception:
             logger.warning("init_db mock org insert failed", exc_info=True)
+
+        for stmt in _HOMEOWNER_AUTH_DDL:
+            try:
+                await conn.execute(stmt)
+            except Exception:
+                logger.warning(
+                    "init_db homeowner auth DDL failed: %s…",
+                    stmt[:80],
+                    exc_info=True,
+                )
+
+        try:
+            await conn.execute(
+                """
+                INSERT INTO profiles (
+                    id, role, full_name, org_id, email, password_hash, completed_projects_count
+                )
+                VALUES (
+                    $1::uuid,
+                    'homeowner',
+                    'Mock Homeowner',
+                    NULL,
+                    $2,
+                    NULL,
+                    0
+                )
+                ON CONFLICT (id) DO NOTHING
+                """,
+                MOCK_HOMEOWNER_USER_ID,
+                "mock@light.io",
+            )
+        except Exception:
+            logger.warning("init_db mock homeowner profile insert failed", exc_info=True)
 
     logger.info(
         "Database schema init finished: %d statements attempted (%d ok, %d failed); "

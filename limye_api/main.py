@@ -31,6 +31,7 @@ from limye_api.routers import (
     contracts,
     debug,
     design,
+    estimate,
     projects,
     reports,
     wallet,
@@ -211,12 +212,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
 
     api = "/api/v1"
+
+    @app.get(f"{api}/health", tags=["health"], summary="API-prefix health probe")
+    async def api_v1_health(request: Request) -> dict[str, str]:
+        pool_ok = getattr(request.app.state, "pool", None) is not None
+        if pool_ok:
+            return {"status": "ok", "database": "connected"}
+        return {
+            "status": "degraded",
+            "database": "unavailable",
+            "warning": "PostgreSQL pool is not available; check DATABASE_URL and logs",
+        }
+
     app.include_router(debug.router, prefix=api)
     app.include_router(auth.public_router, prefix=api)
     app.include_router(auth.secured_router, prefix=api)
     app.include_router(projects.router, prefix=api)
     app.include_router(chat.router, prefix=api)
     app.include_router(design.router, prefix=api)
+    app.include_router(estimate.router, prefix=api)
     app.include_router(reports.router, prefix=api)
     app.include_router(contracts.router, prefix=api)
     app.include_router(wallet.router, prefix=api)
