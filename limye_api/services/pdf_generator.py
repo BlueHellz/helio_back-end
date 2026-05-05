@@ -11,7 +11,7 @@ from io import BytesIO
 from typing import Any, Dict
 
 # Placeholder: real templates will use ``reportlab.platypus`` and assets under
-# ``helios_api/data/`` (logos) as needed.
+# ``limye_api/data/`` (logos) as needed.
 
 
 def _render_report_sync(_payload: Dict[str, Any]) -> bytes:

@@ -1,8 +1,8 @@
 """Application configuration (Pydantic Settings).
 
 All secrets and tunables are loaded from environment variables. Use
-``helios_api/.env.example`` as a template. Copy the values to ``.env`` at the
-**repository root** (or ``.env`` inside ``helios_api/``) for local development.
+``limye_api/.env.example`` as a template. Copy the values to ``.env`` at the
+**repository root** (or ``.env`` inside ``limye_api/``) for local development.
 On Render, set variables in the service dashboard.
 """
 
@@ -25,7 +25,7 @@ _ENV_FILES: tuple[str, ...] = tuple(
 
 
 class Settings(BaseSettings):
-    """Black Light API settings."""
+    """LIMYÈ API settings."""
 
     model_config = SettingsConfigDict(
         env_file=_ENV_FILES or None,  # type: ignore[assignment]
@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     )
 
     # --- App
-    APP_NAME: str = "Black Light API"
+    APP_NAME: str = "LIMYÈ API"
     ENV: Literal["development", "production", "test"] = "development"
     LOG_LEVEL: str = "info"
 

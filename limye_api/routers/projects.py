@@ -8,8 +8,8 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 
-from helios_api.db.database import get_db, record_to_api_dict
-from helios_api.middleware.auth import get_current_user
+from limye_api.db.database import get_db, record_to_api_dict
+from limye_api.middleware.auth import get_current_user
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 

@@ -18,7 +18,7 @@ env/
 .env
 .env.*
 !.env.example
-!helios_api/.env.example
+!limye_api/.env.example
 
 # IDE
 .vscode/
@@ -28,8 +28,8 @@ env/
 .DS_Store
 
 # Local data
-helios_api/data/*
-!helios_api/data/.gitkeep
+limye_api/data/*
+!limye_api/data/.gitkeep
 
 # Build
 build/

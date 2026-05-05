@@ -7,8 +7,8 @@ from typing import Any
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from helios_api.db.database import get_db
-from helios_api.routers.projects import fetch_project_by_id
+from limye_api.db.database import get_db
+from limye_api.routers.projects import fetch_project_by_id
 
 router = APIRouter(prefix="/design", tags=["design"])
 

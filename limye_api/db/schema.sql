@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════════════════════
--- Black Light — Postgres schema for Supabase
+-- LIMYÈ — Postgres schema for Supabase
 -- Execute in Supabase SQL editor (manual). References auth.users(id) for profiles.
 --
 -- POLICY INTENT (comments + SQL):
@@ -440,5 +440,5 @@ CREATE POLICY revenue_org ON revenue_events FOR ALL TO authenticated USING (org_
 
 CREATE POLICY org_layouts_org ON org_layouts FOR ALL TO authenticated USING (org_id IN (SELECT user_org_ids())) WITH CHECK (org_id IN (SELECT user_org_ids()));
 
-COMMENT ON SCHEMA public IS 'RLS + Black Light: review projects_update WITH CHECK and pools SELECT before production hardening.';
+COMMENT ON SCHEMA public IS 'RLS + LIMYÈ: review projects_update WITH CHECK and pools SELECT before production hardening.';
 

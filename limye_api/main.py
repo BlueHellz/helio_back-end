@@ -1,12 +1,12 @@
-"""Black Light — FastAPI application factory.
+"""LIMYÈ — FastAPI application factory.
 
 Run locally (from the repository root)::
 
-    uvicorn helios_api.main:app --reload --port 8000
+    uvicorn limye_api.main:app --reload --port 8000
 
 Render (build installs deps; start)::
 
-    uvicorn helios_api.main:app --host 0.0.0.0 --port $PORT
+    uvicorn limye_api.main:app --host 0.0.0.0 --port $PORT
 """
 
 from __future__ import annotations
@@ -22,10 +22,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from helios_api.config import Settings, get_settings
-from helios_api.db.database import create_pool_safe
-from helios_api.db.init_db import init_database
-from helios_api.routers import (
+from limye_api.config import Settings, get_settings
+from limye_api.db.database import create_pool_safe
+from limye_api.db.init_db import init_database
+from limye_api.routers import (
     auth,
     chat,
     contracts,

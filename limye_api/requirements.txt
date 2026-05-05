@@ -1,5 +1,5 @@
-# Black Light — Python dependencies
-# Install: pip install -r helios_api/requirements.txt
+# LIMYÈ — Python dependencies
+# Install: pip install -r limye_api/requirements.txt
 # (Or from repo root: pip install -r requirements.txt  →  includes this file)
 
 fastapi>=0.115.0

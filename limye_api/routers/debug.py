@@ -8,8 +8,8 @@ import asyncpg
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from helios_api.config import Settings, get_settings
-from helios_api.db.database import get_db
+from limye_api.config import Settings, get_settings
+from limye_api.db.database import get_db
 
 router = APIRouter(prefix="/debug", tags=["debug"])
 

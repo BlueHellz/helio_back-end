@@ -10,9 +10,9 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 
-from helios_api.db.database import get_db
-from helios_api.middleware.auth import get_current_user
-from helios_api.routers.projects import _can_access_project
+from limye_api.db.database import get_db
+from limye_api.middleware.auth import get_current_user
+from limye_api.routers.projects import _can_access_project
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -22,7 +22,7 @@ def _pdf_bytes(project_id: str) -> bytes:
     c = canvas.Canvas(buf, pagesize=letter)
     w, h = letter
     c.setFont("Helvetica-Bold", 16)
-    c.drawString(72, h - 72, "Black Light — Solar Design Report (stub)")
+    c.drawString(72, h - 72, "LIMYÈ — Solar Design Report (stub)")
     c.setFont("Helvetica", 11)
     c.drawString(72, h - 100, f"Project id: {project_id}")
     c.drawString(

@@ -1,4 +1,4 @@
-"""Black Light conversational brain (SSE + DeepSeek).
+"""LIMYÈ conversational brain (SSE + DeepSeek).
 
 Chat streaming remains a lightweight stub until full tool orchestration lands.
 DeepSeek is called via OpenAI-compatible client for LIMYÈ configuration flows.
@@ -13,11 +13,11 @@ from typing import AsyncIterator
 from openai import APIError as OpenAIAPIError
 from openai import AsyncOpenAI
 
-from helios_api.config import get_settings
+from limye_api.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-BLACKLIGHT_SYSTEM_PROMPT = """You are Black Light AI — a solar-design expert who
+LIMYE_SYSTEM_PROMPT = """You are LIMYÈ AI — a solar-design expert who
 guides homeowners and installers with precision, NEC-aware electrical reasoning,
 honest ROI, and ethically sharp ninja sales psychology: build trust first,
 surface urgency from data (not hype), and always tie savings to their roof and
@@ -53,14 +53,14 @@ async def deepseek_chat_completion(system_prompt: str, user_prompt: str) -> str:
         await client.close()
 
 
-async def run_blacklight_chat(project_id: str, message: str) -> AsyncIterator[str]:
+async def run_limye_chat(project_id: str, message: str) -> AsyncIterator[str]:
     """Async token generator for SSE (mock streaming until tools + DeepSeek wire up).
 
     Yields short string chunks to simulate model streaming.
     """
-    _ = project_id, message, BLACKLIGHT_SYSTEM_PROMPT  # wired in full implementation
+    _ = project_id, message, LIMYE_SYSTEM_PROMPT  # wired in full implementation
     stub = (
-        "Black Light stub: your message is received. "
+        "LIMYÈ stub: your message is received. "
         "DeepSeek + tool orchestration will stream here next."
     )
     for word in stub.split():

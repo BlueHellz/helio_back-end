@@ -6,9 +6,9 @@ import asyncpg
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from helios_api.db.database import get_db
-from helios_api.middleware.auth import get_current_user
-from helios_api.services import coin_service
+from limye_api.db.database import get_db
+from limye_api.middleware.auth import get_current_user
+from limye_api.services import coin_service
 
 router = APIRouter(prefix="/wallet", tags=["wallet"])
 

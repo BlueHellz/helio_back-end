@@ -7,7 +7,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, EmailStr, Field
 
-from helios_api.middleware.auth import get_current_user, mock_profile_row, profile_from_signup
+from limye_api.middleware.auth import get_current_user, mock_profile_row, profile_from_signup
 
 public_router = APIRouter(prefix="/auth", tags=["auth"])
 secured_router = APIRouter(prefix="/auth", tags=["auth"])

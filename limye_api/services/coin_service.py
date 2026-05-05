@@ -7,7 +7,7 @@ from typing import Any, Dict
 
 import asyncpg
 
-from helios_api.db.database import record_to_api_dict
+from limye_api.db.database import record_to_api_dict
 async def get_balance(conn: asyncpg.Connection, user_id: str) -> Decimal:
     r = await conn.fetchrow(
         "SELECT balance FROM hlio_wallets WHERE user_id = $1::uuid LIMIT 1",

@@ -10,9 +10,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 import asyncpg
 
-from helios_api.db.database import get_db
-from helios_api.routers.projects import fetch_project_by_id
-from helios_api.services.ai_brain import run_blacklight_chat
+from limye_api.db.database import get_db
+from limye_api.routers.projects import fetch_project_by_id
+from limye_api.services.ai_brain import run_limye_chat
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -31,7 +31,7 @@ async def chat_sse(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
 
     async def events() -> AsyncIterator[bytes]:
-        async for token in run_blacklight_chat(project_id, body.message):
+        async for token in run_limye_chat(project_id, body.message):
             payload = json.dumps({"token": token})
             yield f"data: {payload}\n\n".encode()
         yield b"data: [DONE]\n\n"

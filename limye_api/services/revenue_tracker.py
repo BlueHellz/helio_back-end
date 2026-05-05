@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 
 import asyncpg
 
-from helios_api.db.database import record_to_api_dict
+from limye_api.db.database import record_to_api_dict
 
 EventType = str  # rev_share | marketplace_fee | pool_token_listing_fee | pool_token_trade_royalty
 
