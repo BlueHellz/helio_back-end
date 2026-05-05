@@ -11,8 +11,7 @@ from pydantic import BaseModel, Field
 import asyncpg
 
 from helios_api.db.database import get_db
-from helios_api.middleware.auth import get_current_user
-from helios_api.routers.projects import _can_access_project
+from helios_api.routers.projects import fetch_project_by_id
 from helios_api.services.ai_brain import run_blacklight_chat
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -26,10 +25,9 @@ class ChatBody(BaseModel):
 async def chat_sse(
     project_id: str,
     body: ChatBody,
-    user: dict = Depends(get_current_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> StreamingResponse:
-    if await _can_access_project(db, project_id, user) is None:
+    if await fetch_project_by_id(db, project_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
 
     async def events() -> AsyncIterator[bytes]:

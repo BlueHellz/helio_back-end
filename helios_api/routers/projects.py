@@ -44,8 +44,14 @@ class ProjectUpdate(BaseModel):
     status: Optional[ProjStatus] = None
 
 
-def _org_id_for_user(user: dict) -> Optional[str]:
-    return str(user["org_id"]) if user.get("org_id") else None
+async def fetch_project_by_id(
+    db: asyncpg.Connection, project_id: str
+) -> Optional[dict[str, Any]]:
+    """Public fetch by id (used by unauthenticated design/chat)."""
+    r = await db.fetchrow("SELECT * FROM projects WHERE id = $1::uuid LIMIT 1", project_id)
+    if r is None:
+        return None
+    return record_to_api_dict(r)
 
 
 @router.get("")
@@ -56,16 +62,9 @@ async def list_projects(
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
     uid = user["id"]
-    oid = _org_id_for_user(user)
-    args: list[Any] = []
-    if oid:
-        where = "(user_id = $1::uuid OR org_id = $2::uuid)"
-        args = [uid, oid]
-        n = 3
-    else:
-        where = "user_id = $1::uuid"
-        args = [uid]
-        n = 2
+    where = "user_id = $1::uuid"
+    args: list[Any] = [uid]
+    n = 2
     if status_f:
         where += f" AND status = ${n}"
         args.append(status_f)
@@ -84,15 +83,13 @@ async def create_project(
     user: dict = Depends(get_current_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
-    oid = _org_id_for_user(user)
     row = await db.fetchrow(
         """
         INSERT INTO projects (user_id, org_id, address, project_type, custom_data)
-        VALUES ($1::uuid, $2, $3, $4, $5::jsonb)
+        VALUES ($1::uuid, NULL, $2, $3, $4::jsonb)
         RETURNING *
         """,
         user["id"],
-        oid,
         body.address,
         body.project_type,
         body.custom_data,
@@ -105,14 +102,10 @@ async def create_project(
 async def _can_access_project(
     db: asyncpg.Connection, project_id: str, user: dict
 ) -> Optional[dict[str, Any]]:
-    r = await db.fetchrow("SELECT * FROM projects WHERE id = $1::uuid LIMIT 1", project_id)
-    if r is None:
+    row = await fetch_project_by_id(db, project_id)
+    if row is None:
         return None
-    row = record_to_api_dict(r)
     if str(row["user_id"]) == str(user["id"]):
-        return row
-    oid = _org_id_for_user(user)
-    if oid and row.get("org_id") and str(row["org_id"]) == oid:
         return row
     return None
 
@@ -179,7 +172,5 @@ async def delete_project(
     base = await _can_access_project(db, project_id, user)
     if base is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
-    if str(base["user_id"]) != str(user["id"]) and user.get("role") not in ("installer", "admin"):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only owner or org staff can delete")
     await db.execute("DELETE FROM projects WHERE id = $1::uuid", project_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

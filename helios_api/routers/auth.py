@@ -7,12 +7,10 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, EmailStr, Field
 
-from helios_api.middleware.auth import get_current_user, mock_profile_row
+from helios_api.middleware.auth import get_current_user, mock_profile_row, profile_from_signup
 
 public_router = APIRouter(prefix="/auth", tags=["auth"])
 secured_router = APIRouter(prefix="/auth", tags=["auth"])
-
-Role = Literal["homeowner", "installer", "drone_op", "investor", "admin"]
 
 _MOCK_ACCESS = "dev-bypass-access-token"
 _MOCK_REFRESH = "dev-bypass-refresh-token"
@@ -22,7 +20,7 @@ class SignupBody(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8)
     full_name: str = Field(min_length=1)
-    role: Role
+    role: Literal["homeowner"] = "homeowner"
 
 
 class LoginBody(BaseModel):
@@ -34,8 +32,7 @@ class RefreshBody(BaseModel):
     refresh_token: str
 
 
-def _mock_session_response() -> dict[str, Any]:
-    prof = mock_profile_row()
+def _session_response_from_profile(prof: dict[str, Any]) -> dict[str, Any]:
     uid = str(prof["id"])
     return {
         "access_token": _MOCK_ACCESS,
@@ -55,10 +52,16 @@ def _mock_session_response() -> dict[str, Any]:
     }
 
 
+def _mock_session_response() -> dict[str, Any]:
+    """Login / refresh: anonymous mock homeowner."""
+    return _session_response_from_profile(mock_profile_row())
+
+
 @public_router.post("/signup", status_code=status.HTTP_201_CREATED)
-def signup(_body: SignupBody) -> dict[str, Any]:
-    """Return mock user session (development bypass)."""
-    return _mock_session_response()
+def signup(body: SignupBody) -> dict[str, Any]:
+    """Return mock user session (development bypass). Homeowner only."""
+    prof = profile_from_signup(str(body.email), body.full_name)
+    return _session_response_from_profile(prof)
 
 
 @public_router.post("/login")

@@ -8,8 +8,7 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from helios_api.db.database import get_db
-from helios_api.middleware.auth import get_current_user
-from helios_api.routers.projects import _can_access_project
+from helios_api.routers.projects import fetch_project_by_id
 
 router = APIRouter(prefix="/design", tags=["design"])
 
@@ -17,10 +16,9 @@ router = APIRouter(prefix="/design", tags=["design"])
 @router.post("/{project_id}")
 async def run_design_pipeline(
     project_id: str,
-    user: dict = Depends(get_current_user),
     db: asyncpg.Connection = Depends(get_db),
 ) -> dict[str, Any]:
-    if await _can_access_project(db, project_id, user) is None:
+    if await fetch_project_by_id(db, project_id) is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
     return {
         "ok": True,
