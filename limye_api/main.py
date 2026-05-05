@@ -153,7 +153,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings = get_settings()
 
     app = FastAPI(
-        title=settings.APP_NAME,
+        title="LIMYÈ API",
         version="0.1.0",
         lifespan=lifespan,
     )
