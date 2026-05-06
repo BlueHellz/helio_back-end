@@ -23,6 +23,20 @@ _HOMEOWNER_AUTH_DDL = (
     ),
 )
 
+_PROJECT_DASHBOARD_DDL = (
+    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS selected_installer_id TEXT",
+    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS selected_funder_id TEXT",
+    "ALTER TABLE projects ADD COLUMN IF NOT EXISTS inspection_scheduled_at TIMESTAMPTZ",
+    (
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS dashboard_messages JSONB "
+        "DEFAULT '[]'::jsonb"
+    ),
+    (
+        "ALTER TABLE projects ADD COLUMN IF NOT EXISTS timeline_events JSONB "
+        "DEFAULT '[]'::jsonb"
+    ),
+)
+
 # Strip Supabase-only RLS block (uses ``authenticated`` role and ``auth.uid()``).
 RLS_BLOCK_MARKER = (
     "\n-- ═══════════════════════════════════════════════════════════════════════════════\n"
@@ -184,6 +198,16 @@ async def init_database(pool: asyncpg.Pool) -> None:
             except Exception:
                 logger.warning(
                     "init_db homeowner auth DDL failed: %s…",
+                    stmt[:80],
+                    exc_info=True,
+                )
+
+        for stmt in _PROJECT_DASHBOARD_DDL:
+            try:
+                await conn.execute(stmt)
+            except Exception:
+                logger.warning(
+                    "init_db project dashboard DDL failed: %s…",
                     stmt[:80],
                     exc_info=True,
                 )

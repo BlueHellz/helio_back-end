@@ -94,6 +94,11 @@ CREATE TABLE projects (
     electrical_spec JSONB,
     financial_summary JSONB,
     custom_data JSONB DEFAULT '{}',
+    selected_installer_id TEXT,
+    selected_funder_id TEXT,
+    inspection_scheduled_at TIMESTAMPTZ,
+    dashboard_messages JSONB DEFAULT '[]',
+    timeline_events JSONB DEFAULT '[]',
     status TEXT DEFAULT 'draft' CHECK (status IN (
         'draft','designed','drone_requested','drone_completed','permit_submitted',
         'permitted','installed','inspected','completed'

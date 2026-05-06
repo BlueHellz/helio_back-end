@@ -1,4 +1,4 @@
-"""Synthetic solar design + financial model for auth-free `/design` and `/estimate`.
+"""Synthetic solar design + financial model for embedded proposal helpers (e.g. project pipeline).
 
 Produces consistent, explainable projections from bill and tariff assumptions until
 external APIs (Google Solar, tariffs) are wired in.
@@ -23,7 +23,7 @@ _RESIDUAL_BILL_FRACTION = 0.05
 
 
 class DesignParams(BaseModel):
-    """Inputs shared by POST `/design` and POST `/estimate`."""
+    """Inputs for synthetic proposal builders (not the public `/estimate` market endpoint)."""
 
     address: str = Field(min_length=1, description="Service address text")
     monthly_bill_usd: float = Field(

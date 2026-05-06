@@ -32,8 +32,10 @@ from limye_api.routers import (
     debug,
     design,
     estimate,
+    homeowner_dashboard,
     projects,
     reports,
+    save_design,
     wallet,
 )
 
@@ -228,8 +230,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth.public_router, prefix=api)
     app.include_router(auth.secured_router, prefix=api)
     app.include_router(projects.router, prefix=api)
+    app.include_router(homeowner_dashboard.router, prefix=api)
     app.include_router(chat.router, prefix=api)
     app.include_router(design.router, prefix=api)
+    app.include_router(save_design.router, prefix=api)
     app.include_router(estimate.router, prefix=api)
     app.include_router(reports.router, prefix=api)
     app.include_router(contracts.router, prefix=api)

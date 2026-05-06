@@ -1,23 +1,58 @@
-"""Design pipeline: auth-free proposal from inputs and project-scoped reruns."""
+"""Design pipeline: auth-free solar layout from address; project-scoped reruns."""
 
 from __future__ import annotations
 
 from typing import Any
 
 import asyncpg
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import AliasChoices, BaseModel, Field
 
 from limye_api.db.database import get_db
 from limye_api.routers.projects import fetch_project_by_id
 from limye_api.services.proposal_estimate import DesignParams, build_public_proposal
+from limye_api.services.solar_design import run_solar_design
 
 router = APIRouter(prefix="/design", tags=["design"])
 
 
+class SolarDesignRequestBody(BaseModel):
+    """POST /design JSON body. Optional homeowner fields are accepted for downstream use."""
+
+    model_config = {"extra": "ignore"}
+
+    address: str = Field(min_length=1)
+    monthly_bill_usd: float | None = Field(
+        None,
+        validation_alias=AliasChoices("monthly_bill_usd", "monthly_bill"),
+    )
+    utility_rate_usd_per_kwh: float | None = Field(
+        None,
+        gt=0,
+        validation_alias=AliasChoices("utility_rate_usd_per_kwh", "utility_rate_per_kwh"),
+    )
+    roof_age_years: int | None = Field(
+        None,
+        ge=0,
+        le=120,
+        validation_alias=AliasChoices("roof_age_years", "roof_age"),
+    )
+
+
 @router.post("")
-async def design_from_inputs(body: DesignParams) -> dict[str, Any]:
-    """Auth-free: full synthetic design + financial projections (no DB writes)."""
-    return build_public_proposal(body)
+async def design_from_address(
+    request: Request,
+    body: SolarDesignRequestBody,
+) -> dict[str, Any]:
+    """Auth-free: Mapbox geocode → Google Solar buildingInsights → canvas-ready roof + layout."""
+    settings = request.app.state.settings
+    redis_client = getattr(request.app.state, "redis", None)
+    try:
+        return await run_solar_design(body.address, settings, redis_client)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(e)) from e
 
 
 @router.post("/{project_id}")

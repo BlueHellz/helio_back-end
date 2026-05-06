@@ -67,6 +67,15 @@ class Settings(BaseSettings):
     TWILIO_AUTH_TOKEN: str | None = None
     TWILIO_PHONE_NUMBER: str | None = None
 
+    # --- Outbound mail (proposal PDF delivery)
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM_EMAIL: str = ""
+    SMTP_FROM_NAME: str = "LIMYÈ"
+    SMTP_USE_TLS: bool = True
+
     # --- Infra
     REDIS_URL: str = "redis://localhost:6379"
     SOLANA_RPC_URL: str = "https://api.devnet.solana.com"
